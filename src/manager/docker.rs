@@ -8,7 +8,7 @@ pub struct DockerManager;
 
 static FROM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)^FROM\s+(?:--platform=\S+\s+)?(?P<image>[^\s]+?)(?::(?P<tag>[^\s@]+))?(?:@(?P<digest>sha256:\w+))?\s*(?:AS\s+\S+)?$"
+        r"(?i)^FROM\s+(?:--platform=\S+\s+)?(?P<reference>[^\s]+)\s*(?:AS\s+\S+)?$"
     ).unwrap()
 });
 
@@ -70,23 +70,23 @@ impl DockerManager {
             }
 
             if let Some(caps) = FROM_RE.captures(trimmed) {
-                let image = caps.name("image").unwrap().as_str();
-                let tag = match caps.name("tag") {
-                    Some(t) => t.as_str().to_string(),
-                    None => {
-                        if caps.name("digest").is_some() {
-                            continue; // digest-only, skip
-                        }
-                        continue; // no tag, skip (e.g. FROM scratch)
-                    }
+                let reference = caps.name("reference").unwrap().as_str();
+
+                // Skip digest-only references like nginx@sha256:abc123
+                if reference.contains('@') && !reference.contains(':') {
+                    continue;
+                }
+
+                let (image, tag) = match Self::split_image_tag(reference) {
+                    Some(pair) => pair,
+                    None => continue, // no tag (e.g. FROM scratch)
                 };
 
-                let (registry, image_name) = Self::parse_image_reference(image);
-                let full_ref = format!("{}:{}", image, tag);
+                let (registry, image_name) = Self::parse_image_reference(&image);
 
                 deps.push(Dependency {
                     name: image_name.clone(),
-                    current_version: tag,
+                    current_version: tag.clone(),
                     registry: RegistrySource::DockerRegistry {
                         image: image_name,
                         registry,
@@ -94,7 +94,7 @@ impl DockerManager {
                     file_path: file_path.to_string(),
                     update_context: UpdateContext::DockerFrom {
                         line_number: line_num,
-                        full_reference: full_ref,
+                        full_reference: format!("{}:{}", image, tag),
                     },
                 });
             }

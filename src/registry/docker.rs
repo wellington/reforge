@@ -39,16 +39,32 @@ impl DockerRegistryClient {
         }
     }
 
-    fn resolve_registry_url(registry: &Option<String>) -> (String, String) {
+    fn resolve_registry_url(
+        registry: &Option<String>,
+        credentials: &HashMap<String, RegistryCredential>,
+    ) -> (String, String) {
         match registry {
             Some(reg) => {
                 let host = reg.split('/').next().unwrap_or(reg);
+                if let Some(cred) = credentials.get(host) {
+                    if let Some(base_url) = &cred.base_url {
+                        return (base_url.trim_end_matches('/').to_string(), host.to_string());
+                    }
+                }
                 (format!("https://{}", host), host.to_string())
             }
-            None => (
-                "https://registry-1.docker.io".to_string(),
-                "registry-1.docker.io".to_string(),
-            ),
+            None => {
+                let default_host = "registry-1.docker.io";
+                if let Some(cred) = credentials.get(default_host) {
+                    if let Some(base_url) = &cred.base_url {
+                        return (base_url.trim_end_matches('/').to_string(), default_host.to_string());
+                    }
+                }
+                (
+                    format!("https://{}", default_host),
+                    default_host.to_string(),
+                )
+            }
         }
     }
 
@@ -56,13 +72,10 @@ impl DockerRegistryClient {
         if registry.is_none() && !image.contains('/') {
             format!("library/{}", image)
         } else if let Some(reg) = registry {
-            // Strip registry host prefix from image name if present
             let host = reg.split('/').next().unwrap_or(reg);
             if image.starts_with(host) {
                 image.strip_prefix(host).unwrap_or(image).trim_start_matches('/').to_string()
             } else {
-                // If registry has a path component (e.g., registry.example.com/myorg),
-                // the image is just the name part
                 if reg.contains('/') {
                     let path = reg.splitn(2, '/').nth(1).unwrap_or("");
                     if path.is_empty() {
@@ -153,7 +166,20 @@ impl DockerRegistryClient {
         let tags_url = format!("{}/v2/{}/tags/list", registry_url, image_name);
         debug!("Fetching tags from {}", tags_url);
 
-        let resp = self.client.get(&tags_url).send().await?;
+        let mut req = self.client.get(&tags_url);
+
+        // Pre-authenticate with Bearer token when the credential has a
+        // password_env but no username (API-key-as-bearer pattern used by
+        // Artifactory OCI registries).
+        if let Some(cred) = self.credentials.get(registry_host) {
+            if cred.username.is_none() {
+                if let Some(password) = cred.resolve_password() {
+                    req = req.header(AUTHORIZATION, format!("Bearer {}", password));
+                }
+            }
+        }
+
+        let resp = req.send().await?;
 
         if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
             let www_auth = resp
@@ -223,7 +249,7 @@ impl RegistryClient for DockerRegistryClient {
             }
         };
 
-        let (registry_url, registry_host) = Self::resolve_registry_url(&registry);
+        let (registry_url, registry_host) = Self::resolve_registry_url(&registry, &self.credentials);
         let image_name = Self::resolve_image_name(&image, &registry);
 
         debug!(

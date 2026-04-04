@@ -470,6 +470,10 @@ impl Default for VulnerabilityConfig {
 pub struct RegistryCredential {
     pub username: Option<String>,
     pub password_env: Option<String>,
+    /// Override the base URL for this registry (e.g. `http://localhost:8080`).
+    /// Useful for testing against local mock servers without TLS.
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 impl RegistryCredential {
