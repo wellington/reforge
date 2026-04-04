@@ -26,12 +26,39 @@ pub struct Config {
     pub changelog: ChangelogConfig,
     #[serde(default)]
     pub vulnerability: VulnerabilityConfig,
+    #[serde(default)]
+    pub lockfile: LockfileConfig,
     /// When set, operate against a local git checkout instead of the GitLab API.
     #[serde(default)]
     pub local_path: Option<PathBuf>,
     /// Custom regex-based managers.
     #[serde(default)]
     pub regex_managers: Vec<RegexManagerConfig>,
+}
+
+/// Configuration for lock-file maintenance.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LockfileConfig {
+    /// Whether to update Chart.lock alongside Chart.yaml (default: true).
+    #[serde(default = "default_lockfile_enabled")]
+    pub enabled: bool,
+    /// Path to the helm binary for local mode (e.g. `/usr/local/bin/helm`).
+    /// When `None`, reforge computes digests itself without invoking helm.
+    #[serde(default)]
+    pub helm_binary: Option<String>,
+}
+
+fn default_lockfile_enabled() -> bool {
+    true
+}
+
+impl Default for LockfileConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_lockfile_enabled(),
+            helm_binary: None,
+        }
+    }
 }
 
 /// Configuration for a single custom regex manager.
@@ -502,6 +529,7 @@ impl Config {
             dashboard: DashboardConfig::default(),
             changelog: ChangelogConfig::default(),
             vulnerability: VulnerabilityConfig::default(),
+            lockfile: LockfileConfig::default(),
             local_path,
             regex_managers: vec![],
         })

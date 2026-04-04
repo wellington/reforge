@@ -9,6 +9,7 @@ use crate::config::Config;
 use crate::dashboard;
 use crate::error::Result;
 use crate::grouping::{group_candidates, Group};
+use crate::lockfile;
 use crate::manager::{Dependency, PackageManager, RegistrySource};
 use crate::platform::gitlab::{CreateMrParams, GitLabClient};
 use crate::platform::{FileSource, GitLabSource, LocalGitSource};
@@ -31,6 +32,7 @@ pub struct Orchestrator {
     gitlab: Option<GitLabClient>,
     docker_registry: DockerRegistryClient,
     helm_registry: HelmRegistryClient,
+    http_client: reqwest::Client,
     managers: Vec<Box<dyn PackageManager>>,
     /// Dynamic file-pattern sets for regex managers (parallel to the regex manager
     /// entries appended to `managers`). Each entry is the list of glob patterns for
@@ -62,6 +64,10 @@ impl Orchestrator {
 
         let docker_registry = DockerRegistryClient::new(config.registries.clone());
         let helm_registry = HelmRegistryClient::new(config.registries.clone());
+        let http_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .expect("Failed to build HTTP client");
 
         let mut managers: Vec<Box<dyn PackageManager>> = Vec::new();
         for mgr_name in &config.managers.enabled {
@@ -99,6 +105,7 @@ impl Orchestrator {
             gitlab,
             docker_registry,
             helm_registry,
+            http_client,
             managers,
             regex_manager_patterns,
             version_policy,
@@ -383,6 +390,45 @@ impl Orchestrator {
                     }
                     Err(e) => error!("Failed to commit to {}: {}", branch_name, e),
                 }
+
+                // If this is a Chart.yaml file and lockfile maintenance is enabled,
+                // update the sibling Chart.lock when one exists.
+                if self.config.lockfile.enabled
+                    && file_path.ends_with("Chart.yaml")
+                {
+                    let lock_path = chart_lock_path(file_path);
+                    if let Ok(lock_content) = source.get_file(&lock_path, &branch_name).await {
+                        let mut updated_lock = lock_content.clone();
+                        for c in file_candidates {
+                            let dep_name = &c.dependency.name;
+                            let new_ver = c.new_version.original_tag.as_str();
+                            let new_digest = self
+                                .fetch_dep_digest(&c.dependency.registry, new_ver)
+                                .await;
+                            updated_lock = lockfile::update_chart_lock(
+                                &updated_lock,
+                                dep_name,
+                                new_ver,
+                                &new_digest,
+                            );
+                        }
+                        let lock_commit_msg = format!(
+                            "chore(deps): update Chart.lock for {}",
+                            file_candidates
+                                .iter()
+                                .map(|c| c.dependency.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        match source
+                            .commit_file(&branch_name, &lock_path, &updated_lock, &lock_commit_msg)
+                            .await
+                        {
+                            Ok(_) => info!("Updated Chart.lock at {}", lock_path),
+                            Err(e) => warn!("Failed to update Chart.lock at {}: {}", lock_path, e),
+                        }
+                    }
+                }
             }
 
             // Automerge hint for single-dependency groups.
@@ -620,6 +666,41 @@ impl Orchestrator {
                     &commit_msg,
                 )
                 .await?;
+
+            // Update sibling Chart.lock when lockfile maintenance is enabled.
+            if self.config.lockfile.enabled && file_path.ends_with("Chart.yaml") {
+                let lock_path = chart_lock_path(file_path);
+                if let Ok(lock_content) = source.get_file(&lock_path, branch_name).await {
+                    let mut updated_lock = lock_content.clone();
+                    for c in file_candidates {
+                        let dep_name = &c.dependency.name;
+                        let new_ver = c.new_version.original_tag.as_str();
+                        let new_digest =
+                            self.fetch_dep_digest(&c.dependency.registry, new_ver).await;
+                        updated_lock = lockfile::update_chart_lock(
+                            &updated_lock,
+                            dep_name,
+                            new_ver,
+                            &new_digest,
+                        );
+                    }
+                    let lock_commit_msg = format!(
+                        "chore(deps): update Chart.lock for {}",
+                        file_candidates
+                            .iter()
+                            .map(|c| c.dependency.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                    match source
+                        .commit_file(branch_name, &lock_path, &updated_lock, &lock_commit_msg)
+                        .await
+                    {
+                        Ok(_) => info!("Updated Chart.lock at {}", lock_path),
+                        Err(e) => warn!("Failed to update Chart.lock at {}: {}", lock_path, e),
+                    }
+                }
+            }
         }
 
         let changelog_notes = self.maybe_fetch_changelog(group).await;
@@ -983,6 +1064,18 @@ impl Orchestrator {
         false
     }
 
+    /// Fetch the digest for a helm dependency. Returns a placeholder on failure
+    /// so the rest of the update can proceed.
+    async fn fetch_dep_digest(&self, registry: &RegistrySource, version: &str) -> String {
+        match lockfile::fetch_chart_digest(&self.http_client, registry, version).await {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("Could not fetch chart digest: {}", e);
+                "sha256:unknown".to_string()
+            }
+        }
+    }
+
     fn print_dry_run_report(&self, candidates: &[UpdateCandidate]) {
         if candidates.is_empty() {
             println!("\nNo updates available.");
@@ -1015,5 +1108,14 @@ impl Orchestrator {
 
         println!("{}", "-".repeat(72));
         println!("Total: {} update(s) available\n", candidates.len());
+    }
+}
+
+/// Derive the Chart.lock path that sits alongside a Chart.yaml path.
+fn chart_lock_path(chart_yaml_path: &str) -> String {
+    if let Some(dir) = chart_yaml_path.rfind('/') {
+        format!("{}/Chart.lock", &chart_yaml_path[..dir])
+    } else {
+        "Chart.lock".to_string()
     }
 }

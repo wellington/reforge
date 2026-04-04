@@ -4,6 +4,7 @@ mod config;
 mod dashboard;
 mod error;
 mod grouping;
+mod lockfile;
 mod manager;
 mod orchestrator;
 mod platform;
