@@ -157,6 +157,40 @@ pub struct ScheduleWindow {
     pub hours_end: Option<u32>,
 }
 
+/// Determines how candidates within a rule are grouped together.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GroupBy {
+    /// Group by semver bump type (patch/minor/major).
+    UpdateType,
+    /// Group by package manager (docker/helm).
+    Manager,
+    /// All matching candidates go into one group named after the rule.
+    Pattern,
+    /// Group by the directory path of the file containing the dependency.
+    Path,
+}
+
+/// A rule that matches a set of dependencies and groups them into a single MR.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GroupingRule {
+    /// Name for this rule; used in branch names and MR titles.
+    pub name: String,
+    /// Glob patterns matched against the dependency name. Empty means match all.
+    #[serde(default)]
+    pub match_patterns: Vec<String>,
+    /// How to sub-group the matched candidates.
+    #[serde(default = "default_group_by")]
+    pub group_by: GroupBy,
+    /// When true, major version bumps are split out into their own separate group.
+    #[serde(default)]
+    pub separate_major: bool,
+}
+
+fn default_group_by() -> GroupBy {
+    GroupBy::Pattern
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeRequestConfig {
     #[serde(default = "default_branch_prefix")]
@@ -178,6 +212,9 @@ pub struct MergeRequestConfig {
     /// Time window during which new MRs may be created. None = always allowed.
     #[serde(default)]
     pub schedule_window: Option<ScheduleWindow>,
+    /// Named grouping rules; matched candidates are combined into a single MR per group.
+    #[serde(default)]
+    pub grouping_rules: Vec<GroupingRule>,
 }
 
 impl Default for MergeRequestConfig {
@@ -191,6 +228,7 @@ impl Default for MergeRequestConfig {
             automerge_policies: vec![],
             max_open_mrs: None,
             schedule_window: None,
+            grouping_rules: vec![],
         }
     }
 }

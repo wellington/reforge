@@ -1,12 +1,13 @@
 use chrono::Utc;
 use futures::stream::{self, StreamExt};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
 use crate::automerge::{AutomergeEvaluator, UpdateType};
 use crate::config::Config;
 use crate::dashboard;
 use crate::error::Result;
+use crate::grouping::{group_candidates, Group};
 use crate::manager::{Dependency, PackageManager, RegistrySource};
 use crate::platform::gitlab::{CreateMrParams, GitLabClient};
 use crate::platform::{FileSource, GitLabSource, LocalGitSource};
@@ -182,13 +183,30 @@ impl Orchestrator {
             return Ok(());
         }
 
+        // Partition candidates into groups according to the configured rules.
+        let groups = group_candidates(
+            candidates,
+            &self.config.merge_request.grouping_rules,
+            &self.config.merge_request.grouping,
+        );
+
+        // Reconstruct a flat list for dashboard/dry-run reporting.
+        let flat_candidates: Vec<UpdateCandidate> = groups
+            .iter()
+            .flat_map(|g| g.candidates.iter().map(|c| UpdateCandidate {
+                dependency: c.dependency.clone(),
+                new_version: c.new_version.clone(),
+                file_content: c.file_content.clone(),
+            }))
+            .collect();
+
         // In local mode we commit directly; in GitLab mode we create MRs.
         if self.config.local_path.is_some() {
-            self.apply_local_updates(source, &default_branch, &candidates)
+            self.apply_local_updates(source, &default_branch, &groups)
                 .await?;
 
             if self.dashboard_enabled && self.config.dashboard.enabled {
-                let statuses = dashboard::build_statuses(&all_deps, &candidates, &[], &self.config.merge_request.branch_prefix);
+                let statuses = dashboard::build_statuses(&all_deps, &flat_candidates, &[], &self.config.merge_request.branch_prefix);
                 let body = dashboard::render_dashboard(&statuses, label);
                 let path = &self.config.dashboard.local_path;
                 if let Err(e) = dashboard::write_local_dashboard(&body, path) {
@@ -198,7 +216,7 @@ impl Orchestrator {
                 }
             }
         } else {
-            self.create_gitlab_mrs(source, label, &default_branch, &candidates)
+            self.create_gitlab_mrs(source, label, &default_branch, &groups)
                 .await?;
 
             if self.dashboard_enabled && self.config.dashboard.enabled {
@@ -210,7 +228,7 @@ impl Orchestrator {
                             warn!("Failed to fetch open MRs for dashboard: {}", e);
                             vec![]
                         });
-                    let statuses = dashboard::build_statuses(&all_deps, &candidates, &open_mrs, &self.config.merge_request.branch_prefix);
+                    let statuses = dashboard::build_statuses(&all_deps, &flat_candidates, &open_mrs, &self.config.merge_request.branch_prefix);
                     let body = dashboard::render_dashboard(&statuses, label);
                     match dashboard::upsert_gitlab_dashboard(
                         gitlab,
@@ -234,86 +252,114 @@ impl Orchestrator {
         &self,
         source: &dyn FileSource,
         default_branch: &str,
-        candidates: &[UpdateCandidate],
+        groups: &[Group],
     ) -> Result<()> {
-        for candidate in candidates {
-            let branch_name =
-                self.branch_name_for(&candidate.dependency, &candidate.new_version);
-
-            let already_exists = source.branch_exists(&branch_name).await?;
-            if already_exists {
-                info!(
-                    "Branch already exists for {} -> {} (branch: {}), skipping",
-                    candidate.dependency.name,
-                    candidate.new_version.original_tag,
-                    branch_name
-                );
+        for group in groups {
+            if group.candidates.is_empty() {
                 continue;
             }
 
-            let file_update = match updater::apply_update(
-                &candidate.dependency,
-                &candidate.new_version.original_tag,
-                &candidate.file_content,
-            ) {
-                Ok(u) => u,
-                Err(e) => {
-                    error!(
-                        "Failed to apply update for {}: {}",
-                        candidate.dependency.name, e
-                    );
-                    continue;
-                }
+            let is_grouped = group.candidates.len() > 1;
+            let branch_name = if is_grouped {
+                self.branch_name_for_group(&group.name)
+            } else {
+                self.branch_name_for(
+                    &group.candidates[0].dependency,
+                    &group.candidates[0].new_version,
+                )
             };
+
+            let already_exists = source.branch_exists(&branch_name).await?;
+            if already_exists {
+                info!("Branch already exists (branch: {}), skipping", branch_name);
+                continue;
+            }
 
             if let Err(e) = source.create_branch(&branch_name, default_branch).await {
                 error!("Failed to create branch {}: {}", branch_name, e);
                 continue;
             }
 
-            let commit_msg = format!(
-                "chore(deps): update {} from {} to {}",
-                candidate.dependency.name,
-                candidate.dependency.current_version,
-                candidate.new_version.original_tag,
-            );
+            // Group candidates by file so we can apply all updates for a given
+            // file in a single commit.
+            let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
+            for candidate in &group.candidates {
+                by_file
+                    .entry(candidate.dependency.file_path.clone())
+                    .or_default()
+                    .push(candidate);
+            }
 
-            match source
-                .commit_file(
-                    &branch_name,
-                    &file_update.file_path,
-                    &file_update.updated_content,
-                    &commit_msg,
-                )
-                .await
-            {
-                Ok(commit) => {
-                    info!(
-                        "Committed update for {} on branch {} ({})",
-                        candidate.dependency.name, branch_name, commit
-                    );
+            let mut committed_names: Vec<String> = Vec::new();
 
-                    let update_type = UpdateType::classify(
-                        &candidate.dependency.current_version,
-                        &candidate.new_version.original_tag,
-                    );
-                    let evaluator =
-                        AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-                    let policy_automerge = update_type.as_ref().map_or(false, |ut| {
-                        evaluator.should_automerge(&candidate.dependency.name, ut, None)
-                    });
+            for (file_path, file_candidates) in &by_file {
+                let original_content = &file_candidates[0].file_content;
+                let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
+                    .iter()
+                    .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
+                    .collect();
 
-                    if self.config.merge_request.auto_merge || policy_automerge {
-                        info!(
-                            "Automerge would be applied for {} ({:?}) [local mode]",
-                            candidate.dependency.name, update_type,
-                        );
-                    }
+                let (file_update, errors) =
+                    updater::apply_updates(updates, original_content, file_path);
+
+                for e in &errors {
+                    error!("Failed to apply update in group '{}': {}", group.name, e);
                 }
-                Err(e) => error!(
-                    "Failed to commit update for {}: {}",
-                    candidate.dependency.name, e
-                ),
+
+                let commit_msg = if file_candidates.len() == 1 {
+                    let c = file_candidates[0];
+                    format!(
+                        "chore(deps): update {} from {} to {}",
+                        c.dependency.name,
+                        c.dependency.current_version,
+                        c.new_version.original_tag,
+                    )
+                } else {
+                    format!("chore(deps): grouped update for '{}'", group.name)
+                };
+
+                match source
+                    .commit_file(
+                        &branch_name,
+                        &file_update.file_path,
+                        &file_update.updated_content,
+                        &commit_msg,
+                    )
+                    .await
+                {
+                    Ok(commit) => {
+                        info!(
+                            "Committed {} update(s) on branch {} ({})",
+                            file_candidates.len(),
+                            branch_name,
+                            commit
+                        );
+                        for c in file_candidates {
+                            committed_names.push(c.dependency.name.clone());
+                        }
+                    }
+                    Err(e) => error!("Failed to commit to {}: {}", branch_name, e),
+                }
+            }
+
+            // Automerge hint for single-dependency groups.
+            if group.candidates.len() == 1 {
+                let candidate = &group.candidates[0];
+                let update_type = UpdateType::classify(
+                    &candidate.dependency.current_version,
+                    &candidate.new_version.original_tag,
+                );
+                let evaluator =
+                    AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
+                let policy_automerge = update_type.as_ref().map_or(false, |ut| {
+                    evaluator.should_automerge(&candidate.dependency.name, ut, None)
+                });
+                if self.config.merge_request.auto_merge || policy_automerge {
+                    info!(
+                        "Automerge would be applied for {} ({:?}) [local mode]",
+                        candidate.dependency.name, update_type,
+                    );
+                }
             }
         }
         Ok(())
@@ -324,7 +370,7 @@ impl Orchestrator {
         source: &dyn FileSource,
         project: &str,
         default_branch: &str,
-        candidates: &[UpdateCandidate],
+        groups: &[Group],
     ) -> Result<()> {
         let gitlab = self.gitlab.as_ref().expect("GitLab client required");
 
@@ -348,19 +394,6 @@ impl Orchestrator {
             .map(|mr| mr.source_branch.clone())
             .collect();
 
-        // Sort candidates by priority (highest first) so that when we're at the
-        // rate limit we favour more impactful updates.
-        let mut sorted_candidates: Vec<&UpdateCandidate> = candidates.iter().collect();
-        sorted_candidates.sort_by_key(|c| {
-            let ut = UpdateType::classify(
-                &c.dependency.current_version,
-                &c.new_version.original_tag,
-            );
-            crate::scheduling::PriorityOrder::from_update_type_pub(ut.as_ref())
-        });
-
-        // Rate limiter counts only the MRs that already exist; new ones we
-        // create this run are tracked via `created_this_run`.
         let rate_limiter = RateLimiter::new(
             self.config.merge_request.max_open_mrs,
             existing_mrs.len(),
@@ -378,38 +411,41 @@ impl Orchestrator {
 
         let mut created_count: usize = 0;
 
-        for candidate in sorted_candidates {
+        for group in groups {
+            if group.candidates.is_empty() {
+                continue;
+            }
+
             let slots = rate_limiter.remaining_slots().saturating_sub(created_count);
             if slots == 0 {
                 info!(
-                    "Open MR limit reached — skipping remaining candidates for project {}",
+                    "Open MR limit reached — skipping remaining groups for project {}",
                     project
                 );
                 break;
             }
 
-            let branch_name =
-                self.branch_name_for(&candidate.dependency, &candidate.new_version);
+            let is_grouped = group.candidates.len() > 1;
+            let branch_name = if is_grouped {
+                self.branch_name_for_group(&group.name)
+            } else {
+                self.branch_name_for(
+                    &group.candidates[0].dependency,
+                    &group.candidates[0].new_version,
+                )
+            };
 
             if existing_branches.contains(&branch_name) {
-                info!(
-                    "MR already exists for {} -> {} (branch: {})",
-                    candidate.dependency.name,
-                    candidate.new_version.original_tag,
-                    branch_name
-                );
+                info!("MR already exists for group '{}' (branch: {})", group.name, branch_name);
                 continue;
             }
 
             match self
-                .create_update_mr(source, gitlab, project, default_branch, candidate, &branch_name)
+                .create_group_mr(source, gitlab, project, default_branch, group, &branch_name)
                 .await
             {
                 Ok(()) => created_count += 1,
-                Err(e) => error!(
-                    "Failed to create MR for {} -> {}: {}",
-                    candidate.dependency.name, candidate.new_version.original_tag, e
-                ),
+                Err(e) => error!("Failed to create MR for group '{}': {}", group.name, e),
             }
         }
         Ok(())
@@ -462,77 +498,79 @@ impl Orchestrator {
         }
     }
 
-    async fn create_update_mr(
+    async fn create_group_mr(
         &self,
         source: &dyn FileSource,
         gitlab: &GitLabClient,
         project: &str,
         default_branch: &str,
-        candidate: &UpdateCandidate,
+        group: &Group,
         branch_name: &str,
     ) -> Result<()> {
-        let file_update = updater::apply_update(
-            &candidate.dependency,
-            &candidate.new_version.original_tag,
-            &candidate.file_content,
-        )?;
-
         source.create_branch(branch_name, default_branch).await?;
 
-        let commit_msg = format!(
-            "chore(deps): update {} from {} to {}",
-            candidate.dependency.name,
-            candidate.dependency.current_version,
-            candidate.new_version.original_tag,
-        );
+        // Group candidates by file for multi-file support.
+        let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
+        for candidate in &group.candidates {
+            by_file
+                .entry(candidate.dependency.file_path.clone())
+                .or_default()
+                .push(candidate);
+        }
 
-        source
-            .commit_file(
-                branch_name,
-                &file_update.file_path,
-                &file_update.updated_content,
-                &commit_msg,
-            )
-            .await?;
+        for (file_path, file_candidates) in &by_file {
+            let original_content = &file_candidates[0].file_content;
+            let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
+                .iter()
+                .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
+                .collect();
 
-        let manager_name = match &candidate.dependency.registry {
-            RegistrySource::DockerRegistry { .. } => "docker",
-            RegistrySource::HelmRepository { .. } => "helm",
-            RegistrySource::OciHelmRegistry { .. } => "helm",
+            let (file_update, errors) =
+                updater::apply_updates(updates, original_content, file_path);
+
+            for e in &errors {
+                error!("Failed to apply update in group '{}': {}", group.name, e);
+            }
+
+            let commit_msg = if file_candidates.len() == 1 {
+                let c = file_candidates[0];
+                format!(
+                    "chore(deps): update {} from {} to {}",
+                    c.dependency.name,
+                    c.dependency.current_version,
+                    c.new_version.original_tag,
+                )
+            } else {
+                format!("chore(deps): grouped update for '{}'", group.name)
+            };
+
+            source
+                .commit_file(
+                    branch_name,
+                    &file_update.file_path,
+                    &file_update.updated_content,
+                    &commit_msg,
+                )
+                .await?;
+        }
+
+        let (mr_title, mr_body) = self.build_group_mr_content(group);
+
+        // Automerge: only enable when the group contains a single dependency.
+        let use_automerge = if group.candidates.len() == 1 {
+            let candidate = &group.candidates[0];
+            let update_type = UpdateType::classify(
+                &candidate.dependency.current_version,
+                &candidate.new_version.original_tag,
+            );
+            let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
+            let policy_automerge = update_type.as_ref().map_or(false, |ut| {
+                evaluator.should_automerge(&candidate.dependency.name, ut, None)
+            });
+            self.config.merge_request.auto_merge || policy_automerge
+        } else {
+            self.config.merge_request.auto_merge
         };
-
-        let mr_body = format!(
-            "## Dependency Update\n\n\
-             | Package | Manager | Current | New |\n\
-             |---------|---------|---------|-----|\n\
-             | {} | {} | {} | {} |\n\n\
-             ---\n\n\
-             *This MR was automatically created by reforge.*",
-            candidate.dependency.name,
-            manager_name,
-            candidate.dependency.current_version,
-            candidate.new_version.original_tag,
-        );
-
-        let mr_title = format!(
-            "chore(deps): update {} to {}",
-            candidate.dependency.name, candidate.new_version.original_tag,
-        );
-
-        let update_type = UpdateType::classify(
-            &candidate.dependency.current_version,
-            &candidate.new_version.original_tag,
-        );
-
-        let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-
-        // Determine automerge intent before creating the MR so we can set
-        // merge_when_pipeline_succeeds at creation time when possible.
-        let policy_automerge = update_type.as_ref().map_or(false, |ut| {
-            evaluator.should_automerge(&candidate.dependency.name, ut, None)
-        });
-
-        let use_automerge = self.config.merge_request.auto_merge || policy_automerge;
 
         let mr = gitlab
             .create_mr(
@@ -550,17 +588,50 @@ impl Orchestrator {
             .await?;
 
         info!("Created MR !{}: {}", mr.iid, mr.web_url);
+        Ok(())
+    }
 
-        if policy_automerge {
-            info!(
-                "Automerge policy matched for {} ({:?}): merge_when_pipeline_succeeds enabled on MR !{}",
+    /// Build the MR title and body for a group of update candidates.
+    fn build_group_mr_content(&self, group: &Group) -> (String, String) {
+        let title = if group.candidates.len() == 1 {
+            let c = &group.candidates[0];
+            format!(
+                "chore(deps): update {} to {}",
+                c.dependency.name, c.new_version.original_tag,
+            )
+        } else {
+            format!("chore(deps): grouped update — {}", group.name)
+        };
+
+        let mut rows = String::new();
+        for candidate in &group.candidates {
+            let manager = match &candidate.dependency.registry {
+                RegistrySource::DockerRegistry { .. } => "docker",
+                RegistrySource::HelmRepository { .. } => "helm",
+                RegistrySource::OciHelmRegistry { .. } => "helm",
+            };
+            rows.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
                 candidate.dependency.name,
-                update_type,
-                mr.iid,
-            );
+                manager,
+                candidate.dependency.file_path,
+                candidate.dependency.current_version,
+                candidate.new_version.original_tag,
+            ));
         }
 
-        Ok(())
+        let body = format!(
+            "## Dependency Update{}\n\n\
+             | Package | Manager | File | Current | New |\n\
+             |---------|---------|------|---------|-----|\n\
+             {}\n\
+             ---\n\n\
+             *This MR was automatically created by reforge.*",
+            if group.candidates.len() > 1 { "s" } else { "" },
+            rows,
+        );
+
+        (title, body)
     }
 
     fn branch_name_for(&self, dep: &Dependency, new_version: &VersionInfo) -> String {
@@ -577,6 +648,22 @@ impl Orchestrator {
             sanitized_name,
             new_version.original_tag,
         )
+    }
+
+    fn branch_name_for_group(&self, group_name: &str) -> String {
+        let sanitized = group_name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .collect::<String>();
+        // Use a short hash of the name to guarantee uniqueness even after sanitization.
+        let hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            group_name.hash(&mut h);
+            format!("{:08x}", h.finish() as u32)
+        };
+        format!("{}group-{}-{}", self.config.merge_request.branch_prefix, sanitized, hash)
     }
 
     fn matches_any_pattern(&self, path: &str) -> bool {

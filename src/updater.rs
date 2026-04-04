@@ -1,6 +1,41 @@
 use crate::error::Result;
 use crate::manager::{Dependency, UpdateContext};
 
+/// Apply a sequence of updates to a single file, chaining the output of each
+/// update as the input for the next. Returns the final `FileUpdate` whose
+/// `updated_content` incorporates all changes.
+///
+/// If an individual update fails, it is skipped and the error is returned
+/// alongside the partial result so the caller can note the failure.
+pub fn apply_updates<'a>(
+    updates: impl IntoIterator<Item = (&'a Dependency, &'a str)>,
+    file_content: &str,
+    file_path: &str,
+) -> (FileUpdate, Vec<crate::error::ReforgeError>) {
+    let mut current_content = file_content.to_string();
+    let mut errors: Vec<crate::error::ReforgeError> = Vec::new();
+
+    for (dep, new_version) in updates {
+        match apply_update(dep, new_version, &current_content) {
+            Ok(update) => {
+                current_content = update.updated_content;
+            }
+            Err(e) => {
+                errors.push(e);
+            }
+        }
+    }
+
+    (
+        FileUpdate {
+            file_path: file_path.to_string(),
+            original_content: file_content.to_string(),
+            updated_content: current_content,
+        },
+        errors,
+    )
+}
+
 #[derive(Debug)]
 pub struct FileUpdate {
     pub file_path: String,

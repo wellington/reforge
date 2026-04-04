@@ -2,6 +2,7 @@ mod automerge;
 mod config;
 mod dashboard;
 mod error;
+mod grouping;
 mod manager;
 mod orchestrator;
 mod platform;
