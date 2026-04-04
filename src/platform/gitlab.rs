@@ -89,8 +89,13 @@ struct FileResponse {
 
 impl GitLabClient {
     pub fn new(url: &str, token: &str) -> Result<Self> {
+        Self::with_options(url, token, false)
+    }
+
+    pub fn with_options(url: &str, token: &str, insecure: bool) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
+            .danger_accept_invalid_certs(insecure)
             .build()?;
 
         Ok(Self {

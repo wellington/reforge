@@ -151,6 +151,9 @@ pub struct GitLabConfig {
     pub url: String,
     #[serde(default)]
     pub token: Option<String>,
+    /// Skip TLS certificate verification (for self-signed GitLab instances).
+    #[serde(default)]
+    pub insecure: bool,
 }
 
 fn default_gitlab_url() -> String {
@@ -162,6 +165,7 @@ impl Default for GitLabConfig {
         Self {
             url: default_gitlab_url(),
             token: None,
+            insecure: false,
         }
     }
 }
@@ -554,7 +558,7 @@ impl Config {
         };
 
         Ok(Config {
-            gitlab: GitLabConfig { url, token },
+            gitlab: GitLabConfig { url, token, insecure: false },
             scan: ScanConfig { projects },
             managers: ManagersConfig::default(),
             versioning: VersioningConfig::default(),

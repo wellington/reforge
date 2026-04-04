@@ -61,7 +61,7 @@ impl Orchestrator {
         // Only construct a GitLab client when not in local mode.
         let gitlab = if config.local_path.is_none() {
             let token = config.gitlab.token.as_deref().unwrap_or("");
-            Some(GitLabClient::new(&config.gitlab.url, token)?)
+            Some(GitLabClient::with_options(&config.gitlab.url, token, config.gitlab.insecure)?)
         } else {
             None
         };
@@ -154,7 +154,7 @@ impl Orchestrator {
         for project in &self.config.scan.projects {
             info!("Scanning project: {}", project);
             let source = GitLabSource {
-                client: GitLabClient::new(&self.config.gitlab.url, self.config.gitlab.token.as_deref().unwrap_or(""))?,
+                client: GitLabClient::with_options(&self.config.gitlab.url, self.config.gitlab.token.as_deref().unwrap_or(""), self.config.gitlab.insecure)?,
                 project: project.clone(),
             };
             if let Err(e) = self.process_with_source(&source, project).await {
