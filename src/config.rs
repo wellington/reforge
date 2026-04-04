@@ -115,6 +115,48 @@ fn default_policy_enabled() -> bool {
     true
 }
 
+/// Days of the week (ISO weekday numbering: Monday=1 … Sunday=7).
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Weekday {
+    Monday,
+    Tuesday,
+    Wednesday,
+    Thursday,
+    Friday,
+    Saturday,
+    Sunday,
+}
+
+impl Weekday {
+    /// Return the ISO weekday number (1 = Monday … 7 = Sunday).
+    pub fn iso_number(&self) -> u32 {
+        match self {
+            Weekday::Monday => 1,
+            Weekday::Tuesday => 2,
+            Weekday::Wednesday => 3,
+            Weekday::Thursday => 4,
+            Weekday::Friday => 5,
+            Weekday::Saturday => 6,
+            Weekday::Sunday => 7,
+        }
+    }
+}
+
+/// Restricts when new MRs may be created.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ScheduleWindow {
+    /// Days on which MR creation is allowed. Empty means all days.
+    #[serde(default)]
+    pub days: Vec<Weekday>,
+    /// Hour (UTC, 0-23) at which the window opens (inclusive). None = start of day.
+    #[serde(default)]
+    pub hours_start: Option<u32>,
+    /// Hour (UTC, 0-23) at which the window closes (exclusive). None = end of day.
+    #[serde(default)]
+    pub hours_end: Option<u32>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeRequestConfig {
     #[serde(default = "default_branch_prefix")]
@@ -130,6 +172,12 @@ pub struct MergeRequestConfig {
     /// Fine-grained per-dependency automerge policies (evaluated in order, first match wins).
     #[serde(default)]
     pub automerge_policies: Vec<AutomergePolicy>,
+    /// Maximum number of open reforge MRs allowed at any time. None = unlimited.
+    #[serde(default)]
+    pub max_open_mrs: Option<usize>,
+    /// Time window during which new MRs may be created. None = always allowed.
+    #[serde(default)]
+    pub schedule_window: Option<ScheduleWindow>,
 }
 
 impl Default for MergeRequestConfig {
@@ -141,6 +189,8 @@ impl Default for MergeRequestConfig {
             assignees: vec![],
             auto_merge: false,
             automerge_policies: vec![],
+            max_open_mrs: None,
+            schedule_window: None,
         }
     }
 }

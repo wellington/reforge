@@ -6,6 +6,7 @@ mod manager;
 mod orchestrator;
 mod platform;
 mod registry;
+mod scheduling;
 mod updater;
 mod versioning;
 

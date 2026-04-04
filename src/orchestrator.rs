@@ -1,3 +1,4 @@
+use chrono::Utc;
 use futures::stream::{self, StreamExt};
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
@@ -12,6 +13,7 @@ use crate::platform::{FileSource, GitLabSource, LocalGitSource};
 use crate::registry::docker::DockerRegistryClient;
 use crate::registry::helm::HelmRegistryClient;
 use crate::registry::{parse_version_lenient, RegistryClient, VersionInfo};
+use crate::scheduling::{is_within_schedule_window, RateLimiter};
 use crate::updater;
 use crate::versioning::{PinStrategy, VersionPolicy};
 
@@ -326,6 +328,18 @@ impl Orchestrator {
     ) -> Result<()> {
         let gitlab = self.gitlab.as_ref().expect("GitLab client required");
 
+        // Check schedule window before attempting to create any MRs.
+        if let Some(window) = &self.config.merge_request.schedule_window {
+            let now = Utc::now();
+            if !is_within_schedule_window(now, window) {
+                info!(
+                    "Outside schedule window — skipping MR creation for project {}",
+                    project
+                );
+                return Ok(());
+            }
+        }
+
         let existing_mrs = gitlab
             .list_open_mrs(project, Some(&self.config.merge_request.branch_prefix))
             .await?;
@@ -334,7 +348,46 @@ impl Orchestrator {
             .map(|mr| mr.source_branch.clone())
             .collect();
 
-        for candidate in candidates {
+        // Sort candidates by priority (highest first) so that when we're at the
+        // rate limit we favour more impactful updates.
+        let mut sorted_candidates: Vec<&UpdateCandidate> = candidates.iter().collect();
+        sorted_candidates.sort_by_key(|c| {
+            let ut = UpdateType::classify(
+                &c.dependency.current_version,
+                &c.new_version.original_tag,
+            );
+            crate::scheduling::PriorityOrder::from_update_type_pub(ut.as_ref())
+        });
+
+        // Rate limiter counts only the MRs that already exist; new ones we
+        // create this run are tracked via `created_this_run`.
+        let rate_limiter = RateLimiter::new(
+            self.config.merge_request.max_open_mrs,
+            existing_mrs.len(),
+        );
+
+        if !rate_limiter.can_create_mr() {
+            info!(
+                "Open MR limit reached ({} open, max {:?}) — skipping MR creation for project {}",
+                existing_mrs.len(),
+                self.config.merge_request.max_open_mrs,
+                project,
+            );
+            return Ok(());
+        }
+
+        let mut created_count: usize = 0;
+
+        for candidate in sorted_candidates {
+            let slots = rate_limiter.remaining_slots().saturating_sub(created_count);
+            if slots == 0 {
+                info!(
+                    "Open MR limit reached — skipping remaining candidates for project {}",
+                    project
+                );
+                break;
+            }
+
             let branch_name =
                 self.branch_name_for(&candidate.dependency, &candidate.new_version);
 
@@ -348,14 +401,15 @@ impl Orchestrator {
                 continue;
             }
 
-            if let Err(e) = self
+            match self
                 .create_update_mr(source, gitlab, project, default_branch, candidate, &branch_name)
                 .await
             {
-                error!(
+                Ok(()) => created_count += 1,
+                Err(e) => error!(
                     "Failed to create MR for {} -> {}: {}",
                     candidate.dependency.name, candidate.new_version.original_tag, e
-                );
+                ),
             }
         }
         Ok(())
