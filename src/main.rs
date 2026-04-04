@@ -11,6 +11,7 @@ mod registry;
 mod scheduling;
 mod updater;
 mod versioning;
+mod vulnerability;
 
 use clap::Parser;
 use std::path::PathBuf;

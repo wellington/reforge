@@ -23,6 +23,8 @@ pub struct Config {
     pub dashboard: DashboardConfig,
     #[serde(default)]
     pub changelog: ChangelogConfig,
+    #[serde(default)]
+    pub vulnerability: VulnerabilityConfig,
     /// When set, operate against a local git checkout instead of the GitLab API.
     #[serde(default)]
     pub local_path: Option<PathBuf>,
@@ -364,6 +366,37 @@ impl Default for ChangelogConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct VulnerabilityConfig {
+    /// Whether to query OSV for known CVEs on detected updates.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Labels to add to MRs that fix known vulnerabilities.
+    #[serde(default = "default_security_labels")]
+    pub security_labels: Vec<String>,
+    /// When true, security updates bypass rate limits and are scheduled first.
+    #[serde(default = "default_priority_boost")]
+    pub priority_boost: bool,
+}
+
+fn default_security_labels() -> Vec<String> {
+    vec!["security".to_string()]
+}
+
+fn default_priority_boost() -> bool {
+    true
+}
+
+impl Default for VulnerabilityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            security_labels: default_security_labels(),
+            priority_boost: default_priority_boost(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RegistryCredential {
     pub username: Option<String>,
     pub password_env: Option<String>,
@@ -455,6 +488,7 @@ impl Config {
             registries: HashMap::new(),
             dashboard: DashboardConfig::default(),
             changelog: ChangelogConfig::default(),
+            vulnerability: VulnerabilityConfig::default(),
             local_path,
             regex_managers: vec![],
         })

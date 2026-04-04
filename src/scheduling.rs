@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, Timelike, Utc};
+use std::collections::HashSet;
 
 use crate::automerge::UpdateType;
 use crate::config::ScheduleWindow;
@@ -58,17 +59,33 @@ impl PriorityOrder {
     pub fn from_update_type_pub(ut: Option<&UpdateType>) -> Self {
         Self::from_update_type(ut)
     }
-}
 
-/// Sorts `candidates` in-place by priority (highest priority first).
-pub fn sort_candidates_by_priority(candidates: &mut Vec<UpdateCandidate>) {
-    candidates.sort_by_key(|c| {
+    /// Derive priority, promoting to `Security` when the dependency name is
+    /// present in the provided set of known-vulnerable package names.
+    pub fn from_candidate(c: &UpdateCandidate, security_deps: &HashSet<String>) -> Self {
+        if security_deps.contains(&c.dependency.name) {
+            return PriorityOrder::Security;
+        }
         let ut = UpdateType::classify(
             &c.dependency.current_version,
             &c.new_version.original_tag,
         );
-        PriorityOrder::from_update_type(ut.as_ref())
-    });
+        Self::from_update_type(ut.as_ref())
+    }
+}
+
+/// Sorts `candidates` in-place by priority (highest priority first).
+pub fn sort_candidates_by_priority(candidates: &mut Vec<UpdateCandidate>) {
+    sort_candidates_by_priority_with_security(candidates, &HashSet::new());
+}
+
+/// Sorts `candidates` in-place, treating entries in `security_deps` as
+/// `PriorityOrder::Security` so they are scheduled before all other updates.
+pub fn sort_candidates_by_priority_with_security(
+    candidates: &mut Vec<UpdateCandidate>,
+    security_deps: &HashSet<String>,
+) {
+    candidates.sort_by_key(|c| PriorityOrder::from_candidate(c, security_deps));
 }
 
 /// Returns `true` when `now` falls within the given `ScheduleWindow`.

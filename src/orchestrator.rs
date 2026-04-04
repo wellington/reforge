@@ -18,6 +18,9 @@ use crate::registry::{parse_version_lenient, RegistryClient, VersionInfo};
 use crate::scheduling::{is_within_schedule_window, RateLimiter};
 use crate::updater;
 use crate::versioning::{PinStrategy, VersionPolicy};
+use crate::vulnerability::{
+    ecosystem_for_manager, render_vulnerability_section, VulnerabilityChecker, VulnerabilityInfo,
+};
 
 const CONCURRENCY_LIMIT: usize = 5;
 
@@ -36,6 +39,7 @@ pub struct Orchestrator {
     dry_run: bool,
     dashboard_enabled: bool,
     changelog_fetcher: ChangelogFetcher,
+    vuln_checker: VulnerabilityChecker,
 }
 
 #[derive(Debug)]
@@ -87,6 +91,8 @@ impl Orchestrator {
         let changelog_fetcher =
             ChangelogFetcher::new(config.changelog.github_token.clone());
 
+        let vuln_checker = VulnerabilityChecker::new();
+
         Ok(Self {
             config,
             gitlab,
@@ -98,6 +104,7 @@ impl Orchestrator {
             dry_run,
             dashboard_enabled,
             changelog_fetcher,
+            vuln_checker,
         })
     }
 
@@ -580,7 +587,9 @@ impl Orchestrator {
         }
 
         let changelog_notes = self.maybe_fetch_changelog(group).await;
-        let (mr_title, mr_body) = self.build_group_mr_content(group, changelog_notes.as_deref());
+        let vulns = self.maybe_check_vulnerabilities(group).await;
+        let (mr_title, mr_body) =
+            self.build_group_mr_content(group, changelog_notes.as_deref(), &vulns);
 
         // Automerge: only enable when the group contains a single dependency.
         let use_automerge = if group.candidates.len() == 1 {
@@ -598,6 +607,16 @@ impl Orchestrator {
             self.config.merge_request.auto_merge
         };
 
+        // Append security labels when the update fixes known vulnerabilities.
+        let mut labels = self.config.merge_request.labels.clone();
+        if !vulns.is_empty() {
+            for lbl in &self.config.vulnerability.security_labels {
+                if !labels.contains(lbl) {
+                    labels.push(lbl.clone());
+                }
+            }
+        }
+
         let mr = gitlab
             .create_mr(
                 project,
@@ -606,7 +625,7 @@ impl Orchestrator {
                     target_branch: default_branch.to_string(),
                     title: mr_title,
                     description: mr_body,
-                    labels: self.config.merge_request.labels.clone(),
+                    labels,
                     assignee_ids: self.config.merge_request.assignees.clone(),
                     merge_when_pipeline_succeeds: if use_automerge { Some(true) } else { None },
                 },
@@ -622,6 +641,7 @@ impl Orchestrator {
         &self,
         group: &Group,
         changelog_notes: Option<&str>,
+        vulns: &[VulnerabilityInfo],
     ) -> (String, String) {
         let title = if group.candidates.len() == 1 {
             let c = &group.candidates[0];
@@ -659,16 +679,23 @@ impl Orchestrator {
             _ => String::new(),
         };
 
+        let vuln_section = if !vulns.is_empty() {
+            format!("\n\n{}", render_vulnerability_section(vulns))
+        } else {
+            String::new()
+        };
+
         let body = format!(
             "## Dependency Update{}\n\n\
              | Package | Manager | File | Current | New |\n\
              |---------|---------|------|---------|-----|\n\
              {}\n\
-             {}---\n\n\
+             {}{}---\n\n\
              *This MR was automatically created by reforge.*",
             if group.candidates.len() > 1 { "s" } else { "" },
             rows,
             changelog_section,
+            vuln_section,
         );
 
         (title, body)
@@ -705,6 +732,42 @@ impl Orchestrator {
                 &candidate.new_version.original_tag,
             )
             .await
+    }
+
+    /// Query OSV for vulnerabilities affecting the current version of each
+    /// dependency in the group. Returns an empty vec when the feature is
+    /// disabled or no vulnerabilities are found.
+    async fn maybe_check_vulnerabilities(&self, group: &Group) -> Vec<VulnerabilityInfo> {
+        if !self.config.vulnerability.enabled {
+            return vec![];
+        }
+
+        let mut all_vulns: Vec<VulnerabilityInfo> = Vec::new();
+
+        for candidate in &group.candidates {
+            let manager_name = match &candidate.dependency.registry {
+                RegistrySource::DockerRegistry { .. } => "docker",
+                RegistrySource::HelmRepository { .. } => "helm",
+                RegistrySource::OciHelmRegistry { .. } => "helm",
+            };
+            let ecosystem = ecosystem_for_manager(manager_name);
+            if ecosystem.is_empty() {
+                continue;
+            }
+
+            let mut vulns = self
+                .vuln_checker
+                .check_dependency(
+                    &candidate.dependency.name,
+                    ecosystem,
+                    &candidate.dependency.current_version,
+                )
+                .await;
+
+            all_vulns.append(&mut vulns);
+        }
+
+        all_vulns
     }
 
     fn branch_name_for(&self, dep: &Dependency, new_version: &VersionInfo) -> String {
