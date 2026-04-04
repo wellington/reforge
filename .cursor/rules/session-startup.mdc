@@ -1,0 +1,21 @@
+---
+description: Auto-start TODO backlog work at the beginning of each session
+alwaysApply: true
+---
+
+# Session Startup
+
+At the start of every session:
+
+1. Read `.claude/index.md` and scan for relevant knowledge entries
+2. Read relevant `.claude/knowledge/` files (especially `project-architecture.md` and `todo-completion.md`)
+3. List the `todo/` folder to find open TODO items (files not in `todo/done/`)
+4. Read open TODO files in numeric order
+5. Begin working on the lowest-numbered open TODO item
+6. After completing a TODO, move its file to `todo/done/` and proceed to the next one
+
+When completing a TODO:
+- Verify the acceptance criteria are met
+- Run `cargo check` and `cargo test` to confirm no regressions
+- Move the TODO file to `todo/done/`
+- Update `.claude/knowledge/` if the work produced notable findings
