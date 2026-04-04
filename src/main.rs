@@ -1,3 +1,4 @@
+mod automerge;
 mod config;
 mod dashboard;
 mod error;

@@ -464,6 +464,54 @@ impl GitLabClient {
         .await
     }
 
+    /// Set merge-when-pipeline-succeeds on an existing MR.
+    pub async fn merge_mr(
+        &self,
+        project: &str,
+        mr_iid: u64,
+        merge_when_pipeline_succeeds: bool,
+    ) -> Result<()> {
+        let url = self.api_url(&format!(
+            "/projects/{}/merge_requests/{}/merge",
+            Self::encode_project(project),
+            mr_iid,
+        ));
+
+        let req = self
+            .client
+            .put(&url)
+            .header(PRIVATE_TOKEN, &self.token)
+            .json(&serde_json::json!({
+                "merge_when_pipeline_succeeds": merge_when_pipeline_succeeds,
+            }));
+
+        self.send_with_retry(req).await?;
+        debug!(
+            "Set merge_when_pipeline_succeeds={} on MR !{}",
+            merge_when_pipeline_succeeds, mr_iid
+        );
+        Ok(())
+    }
+
+    /// Immediately accept (merge) an MR without waiting for the pipeline.
+    pub async fn accept_mr(&self, project: &str, mr_iid: u64) -> Result<()> {
+        let url = self.api_url(&format!(
+            "/projects/{}/merge_requests/{}/merge",
+            Self::encode_project(project),
+            mr_iid,
+        ));
+
+        let req = self
+            .client
+            .put(&url)
+            .header(PRIVATE_TOKEN, &self.token)
+            .json(&serde_json::json!({}));
+
+        self.send_with_retry(req).await?;
+        debug!("Accepted MR !{}", mr_iid);
+        Ok(())
+    }
+
     pub async fn list_issues(
         &self,
         project: &str,

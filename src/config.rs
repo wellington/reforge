@@ -88,6 +88,33 @@ fn default_pin_strategy() -> String {
     "semver-minor".to_string()
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateTypeFilter {
+    Patch,
+    Minor,
+    Major,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AutomergePolicy {
+    /// Glob pattern matched against dependency name (e.g. "nginx", "nginx/*", "*").
+    pub match_pattern: String,
+    /// Which update types this policy applies to. Empty means all types.
+    #[serde(default)]
+    pub update_types: Vec<UpdateTypeFilter>,
+    /// Whether automerge is enabled for matches.
+    #[serde(default = "default_policy_enabled")]
+    pub enabled: bool,
+    /// Minimum age in days before the MR may be automerged.
+    #[serde(default)]
+    pub minimum_age_days: Option<u32>,
+}
+
+fn default_policy_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct MergeRequestConfig {
     #[serde(default = "default_branch_prefix")]
@@ -100,6 +127,9 @@ pub struct MergeRequestConfig {
     pub assignees: Vec<u64>,
     #[serde(default)]
     pub auto_merge: bool,
+    /// Fine-grained per-dependency automerge policies (evaluated in order, first match wins).
+    #[serde(default)]
+    pub automerge_policies: Vec<AutomergePolicy>,
 }
 
 impl Default for MergeRequestConfig {
@@ -110,6 +140,7 @@ impl Default for MergeRequestConfig {
             grouping: default_grouping(),
             assignees: vec![],
             auto_merge: false,
+            automerge_policies: vec![],
         }
     }
 }

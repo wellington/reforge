@@ -11,6 +11,7 @@ path = "src/main.rs"
 anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
+chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 regex = "1"

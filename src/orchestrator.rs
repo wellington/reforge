@@ -2,6 +2,7 @@ use futures::stream::{self, StreamExt};
 use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
+use crate::automerge::{AutomergeEvaluator, UpdateType};
 use crate::config::Config;
 use crate::dashboard;
 use crate::error::Result;
@@ -284,10 +285,29 @@ impl Orchestrator {
                 )
                 .await
             {
-                Ok(commit) => info!(
-                    "Committed update for {} on branch {} ({})",
-                    candidate.dependency.name, branch_name, commit
-                ),
+                Ok(commit) => {
+                    info!(
+                        "Committed update for {} on branch {} ({})",
+                        candidate.dependency.name, branch_name, commit
+                    );
+
+                    let update_type = UpdateType::classify(
+                        &candidate.dependency.current_version,
+                        &candidate.new_version.original_tag,
+                    );
+                    let evaluator =
+                        AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
+                    let policy_automerge = update_type.as_ref().map_or(false, |ut| {
+                        evaluator.should_automerge(&candidate.dependency.name, ut, None)
+                    });
+
+                    if self.config.merge_request.auto_merge || policy_automerge {
+                        info!(
+                            "Automerge would be applied for {} ({:?}) [local mode]",
+                            candidate.dependency.name, update_type,
+                        );
+                    }
+                }
                 Err(e) => error!(
                     "Failed to commit update for {}: {}",
                     candidate.dependency.name, e
@@ -445,6 +465,21 @@ impl Orchestrator {
             candidate.dependency.name, candidate.new_version.original_tag,
         );
 
+        let update_type = UpdateType::classify(
+            &candidate.dependency.current_version,
+            &candidate.new_version.original_tag,
+        );
+
+        let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
+
+        // Determine automerge intent before creating the MR so we can set
+        // merge_when_pipeline_succeeds at creation time when possible.
+        let policy_automerge = update_type.as_ref().map_or(false, |ut| {
+            evaluator.should_automerge(&candidate.dependency.name, ut, None)
+        });
+
+        let use_automerge = self.config.merge_request.auto_merge || policy_automerge;
+
         let mr = gitlab
             .create_mr(
                 project,
@@ -455,16 +490,22 @@ impl Orchestrator {
                     description: mr_body,
                     labels: self.config.merge_request.labels.clone(),
                     assignee_ids: self.config.merge_request.assignees.clone(),
-                    merge_when_pipeline_succeeds: if self.config.merge_request.auto_merge {
-                        Some(true)
-                    } else {
-                        None
-                    },
+                    merge_when_pipeline_succeeds: if use_automerge { Some(true) } else { None },
                 },
             )
             .await?;
 
         info!("Created MR !{}: {}", mr.iid, mr.web_url);
+
+        if policy_automerge {
+            info!(
+                "Automerge policy matched for {} ({:?}): merge_when_pipeline_succeeds enabled on MR !{}",
+                candidate.dependency.name,
+                update_type,
+                mr.iid,
+            );
+        }
+
         Ok(())
     }
 
