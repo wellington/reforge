@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  web:
+    image: nginx:1.25.3
+    ports:
+      - "80:80"
+    volumes:
+      - ./html:/usr/share/nginx/html
+
+  redis:
+    image: redis:7.2.3
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: registry.example.com/myorg/postgres:15.4
+    environment:
+      POSTGRES_DB: myapp
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass

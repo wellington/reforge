@@ -1,0 +1,21 @@
+replicaCount: 3
+
+image:
+  repository: nginx
+  tag: "1.25.3"
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Sidecar container
+sidecar:
+  image:
+    repository: envoyproxy/envoy
+    tag: "v1.28.0"
+    pullPolicy: IfNotPresent
+
+ingress:
+  enabled: true
+  className: nginx

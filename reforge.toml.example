@@ -1,0 +1,37 @@
+[gitlab]
+url = "https://gitlab.example.com"
+# token loaded from REFORGE_TOKEN env var (also accepts RENOVATE_TOKEN for migration)
+
+[scan]
+# List of GitLab project paths to scan
+projects = ["procore-fed/traffic/api-gateway"]
+
+[managers]
+enabled = ["helm", "docker"]
+
+[versioning]
+# Pin strategy: "semver-patch", "semver-minor", or "semver-major"
+pin_strategy = "semver-minor"
+
+[merge_request]
+# Branch prefix for update branches
+branch_prefix = "reforge/"
+# Labels to apply to MRs
+labels = ["reforge", "automated"]
+# Group updates into a single MR per manager, or one MR per dependency
+grouping = "per-dependency"
+# Assignee GitLab user IDs (optional)
+assignees = []
+# Auto-merge if pipeline passes (sets merge_when_pipeline_succeeds)
+auto_merge = false
+
+# Additional registry auth for private registries
+# Each entry maps a registry host to credentials
+
+# [registries."registry.example.com"]
+# username = "deploy-token"
+# password_env = "REFORGE_REGISTRY_EXAMPLE_PASSWORD"
+
+# [registries."artifactory.example.com"]
+# username = "deploy-token"
+# password_env = "REFORGE_ARTIFACTORY_PASSWORD"

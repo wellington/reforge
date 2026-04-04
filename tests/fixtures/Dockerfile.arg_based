@@ -1,0 +1,4 @@
+ARG BASE_IMAGE=nginx:1.25.3
+FROM ${BASE_IMAGE}
+COPY . /usr/share/nginx/html
+EXPOSE 80
