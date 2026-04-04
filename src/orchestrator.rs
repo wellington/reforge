@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use tracing::{debug, error, info, warn};
 
 use crate::config::Config;
+use crate::dashboard;
 use crate::error::Result;
 use crate::manager::{Dependency, PackageManager, RegistrySource};
 use crate::platform::gitlab::{CreateMrParams, GitLabClient};
@@ -24,6 +25,7 @@ pub struct Orchestrator {
     managers: Vec<Box<dyn PackageManager>>,
     version_policy: VersionPolicy,
     dry_run: bool,
+    dashboard_enabled: bool,
 }
 
 #[derive(Debug)]
@@ -34,7 +36,7 @@ pub struct UpdateCandidate {
 }
 
 impl Orchestrator {
-    pub fn new(config: Config, dry_run: bool) -> Result<Self> {
+    pub fn new(config: Config, dry_run: bool, dashboard_enabled: bool) -> Result<Self> {
         // Only construct a GitLab client when not in local mode.
         let gitlab = if config.local_path.is_none() {
             let token = config.gitlab.token.as_deref().unwrap_or("");
@@ -66,6 +68,7 @@ impl Orchestrator {
             managers,
             version_policy,
             dry_run,
+            dashboard_enabled,
         })
     }
 
@@ -153,7 +156,7 @@ impl Orchestrator {
 
         info!("Extracted {} total dependencies", all_deps.len());
 
-        let candidates: Vec<UpdateCandidate> = stream::iter(all_deps)
+        let candidates: Vec<UpdateCandidate> = stream::iter(all_deps.clone())
             .map(|(dep, content)| async move { self.check_for_update(dep, content).await })
             .buffer_unordered(CONCURRENCY_LIMIT)
             .filter_map(|result| async move {
@@ -180,9 +183,45 @@ impl Orchestrator {
         if self.config.local_path.is_some() {
             self.apply_local_updates(source, &default_branch, &candidates)
                 .await?;
+
+            if self.dashboard_enabled && self.config.dashboard.enabled {
+                let statuses = dashboard::build_statuses(&all_deps, &candidates, &[], &self.config.merge_request.branch_prefix);
+                let body = dashboard::render_dashboard(&statuses, label);
+                let path = &self.config.dashboard.local_path;
+                if let Err(e) = dashboard::write_local_dashboard(&body, path) {
+                    error!("Failed to write local dashboard: {}", e);
+                } else {
+                    info!("Dashboard written to {}", path);
+                }
+            }
         } else {
             self.create_gitlab_mrs(source, label, &default_branch, &candidates)
                 .await?;
+
+            if self.dashboard_enabled && self.config.dashboard.enabled {
+                if let Some(gitlab) = &self.gitlab {
+                    let open_mrs = gitlab
+                        .list_open_mrs(label, Some(&self.config.merge_request.branch_prefix))
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!("Failed to fetch open MRs for dashboard: {}", e);
+                            vec![]
+                        });
+                    let statuses = dashboard::build_statuses(&all_deps, &candidates, &open_mrs, &self.config.merge_request.branch_prefix);
+                    let body = dashboard::render_dashboard(&statuses, label);
+                    match dashboard::upsert_gitlab_dashboard(
+                        gitlab,
+                        label,
+                        &body,
+                        &self.config.dashboard.labels,
+                    )
+                    .await
+                    {
+                        Ok(issue) => info!("Dashboard issue updated: {}", issue.web_url),
+                        Err(e) => error!("Failed to upsert dashboard issue: {}", e),
+                    }
+                }
+            }
         }
 
         Ok(())

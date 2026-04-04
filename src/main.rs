@@ -1,4 +1,5 @@
 mod config;
+mod dashboard;
 mod error;
 mod manager;
 mod orchestrator;
@@ -49,6 +50,14 @@ struct Cli {
     /// Path to a local git repository checkout (enables local mode, bypasses GitLab API)
     #[arg(long)]
     local_path: Option<PathBuf>,
+
+    /// Create/update a dependency dashboard issue (default: enabled)
+    #[arg(long, default_value_t = true)]
+    dashboard: bool,
+
+    /// Disable the dependency dashboard
+    #[arg(long, overrides_with = "dashboard")]
+    no_dashboard: bool,
 }
 
 #[tokio::main]
@@ -80,7 +89,8 @@ async fn main() -> anyhow::Result<()> {
         config::Config::from_cli(overrides)?
     };
 
-    let orchestrator = Orchestrator::new(config, cli.dry_run)?;
+    let dashboard_enabled = cli.dashboard && !cli.no_dashboard;
+    let orchestrator = Orchestrator::new(config, cli.dry_run, dashboard_enabled)?;
     orchestrator.run().await?;
 
     Ok(())

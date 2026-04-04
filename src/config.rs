@@ -18,6 +18,8 @@ pub struct Config {
     pub merge_request: MergeRequestConfig,
     #[serde(default)]
     pub registries: HashMap<String, RegistryCredential>,
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
     /// When set, operate against a local git checkout instead of the GitLab API.
     #[serde(default)]
     pub local_path: Option<PathBuf>,
@@ -121,6 +123,37 @@ fn default_grouping() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct DashboardConfig {
+    /// Whether to create/update a dashboard issue.
+    #[serde(default = "default_dashboard_enabled")]
+    pub enabled: bool,
+    /// Labels to apply to the dashboard issue.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// Local path to write the dashboard file when in local mode.
+    #[serde(default = "default_dashboard_local_path")]
+    pub local_path: String,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_dashboard_enabled(),
+            labels: vec!["reforge".to_string(), "dependency-dashboard".to_string()],
+            local_path: default_dashboard_local_path(),
+        }
+    }
+}
+
+fn default_dashboard_enabled() -> bool {
+    true
+}
+
+fn default_dashboard_local_path() -> String {
+    "DEPENDENCY_DASHBOARD.md".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RegistryCredential {
     pub username: Option<String>,
     pub password_env: Option<String>,
@@ -201,6 +234,7 @@ impl Config {
             versioning: VersioningConfig::default(),
             merge_request: MergeRequestConfig::default(),
             registries: HashMap::new(),
+            dashboard: DashboardConfig::default(),
             local_path,
         })
     }

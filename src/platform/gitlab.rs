@@ -463,6 +463,118 @@ impl GitLabClient {
         )
         .await
     }
+
+    pub async fn list_issues(
+        &self,
+        project: &str,
+        search_title: Option<&str>,
+        state: Option<&str>,
+    ) -> Result<Vec<Issue>> {
+        let mut issues = Vec::new();
+        let mut page = 1u32;
+        let per_page = 100;
+
+        loop {
+            let mut url = format!(
+                "{}/api/v4/projects/{}/issues?per_page={}&page={}",
+                self.base_url,
+                Self::encode_project(project),
+                per_page,
+                page,
+            );
+            if let Some(s) = state {
+                url.push_str(&format!("&state={}", s));
+            }
+            if let Some(title) = search_title {
+                url.push_str(&format!("&search={}", urlencoding::encode(title)));
+            }
+
+            let req = self.client.get(&url).header(PRIVATE_TOKEN, &self.token);
+            let resp = self.send_with_retry(req).await?;
+
+            let next_page = resp
+                .headers()
+                .get("x-next-page")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u32>().ok());
+
+            let batch: Vec<Issue> = resp.json().await?;
+            let batch_len = batch.len();
+            issues.extend(batch);
+
+            match next_page {
+                Some(np) if batch_len == per_page as usize => page = np,
+                _ => break,
+            }
+        }
+
+        Ok(issues)
+    }
+
+    pub async fn create_issue(
+        &self,
+        project: &str,
+        title: &str,
+        description: &str,
+        labels: &[String],
+    ) -> Result<Issue> {
+        let url = self.api_url(&format!(
+            "/projects/{}/issues",
+            Self::encode_project(project),
+        ));
+
+        let mut body = serde_json::json!({
+            "title": title,
+            "description": description,
+        });
+
+        if !labels.is_empty() {
+            body["labels"] = serde_json::Value::String(labels.join(","));
+        }
+
+        let req = self
+            .client
+            .post(&url)
+            .header(PRIVATE_TOKEN, &self.token)
+            .json(&body);
+
+        let resp = self.send_with_retry(req).await?;
+        let issue: Issue = resp.json().await?;
+        debug!("Created issue #{}: {}", issue.iid, issue.title);
+        Ok(issue)
+    }
+
+    pub async fn update_issue(
+        &self,
+        project: &str,
+        issue_iid: u64,
+        description: &str,
+    ) -> Result<()> {
+        let url = self.api_url(&format!(
+            "/projects/{}/issues/{}",
+            Self::encode_project(project),
+            issue_iid,
+        ));
+
+        let req = self
+            .client
+            .put(&url)
+            .header(PRIVATE_TOKEN, &self.token)
+            .json(&serde_json::json!({ "description": description }));
+
+        self.send_with_retry(req).await?;
+        debug!("Updated issue #{}", issue_iid);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Issue {
+    pub iid: u64,
+    pub title: String,
+    pub description: Option<String>,
+    pub web_url: String,
+    pub state: String,
 }
 
 mod urlencoding {
