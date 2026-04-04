@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::{ReforgeError, Result};
+use crate::rebase::StaleMrStrategy;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
@@ -277,6 +278,12 @@ pub struct MergeRequestConfig {
     /// Named grouping rules; matched candidates are combined into a single MR per group.
     #[serde(default)]
     pub grouping_rules: Vec<GroupingRule>,
+    /// How to handle MRs that are behind or have merge conflicts.
+    #[serde(default)]
+    pub stale_mr_strategy: StaleMrStrategy,
+    /// Whether staleness checks and remediation are enabled.
+    #[serde(default = "default_rebase_enabled")]
+    pub rebase_enabled: bool,
 }
 
 impl Default for MergeRequestConfig {
@@ -291,8 +298,14 @@ impl Default for MergeRequestConfig {
             max_open_mrs: None,
             schedule_window: None,
             grouping_rules: vec![],
+            stale_mr_strategy: StaleMrStrategy::default(),
+            rebase_enabled: default_rebase_enabled(),
         }
     }
+}
+
+fn default_rebase_enabled() -> bool {
+    true
 }
 
 fn default_branch_prefix() -> String {

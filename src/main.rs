@@ -7,6 +7,7 @@ mod grouping;
 mod manager;
 mod orchestrator;
 mod platform;
+mod rebase;
 mod registry;
 mod scheduling;
 mod updater;

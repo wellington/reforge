@@ -62,6 +62,20 @@ pub struct MergeRequest {
     pub web_url: String,
 }
 
+/// Extended MR view that includes conflict and staleness fields.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MrDetail {
+    pub iid: u64,
+    pub title: String,
+    pub source_branch: String,
+    pub target_branch: String,
+    pub state: String,
+    pub web_url: String,
+    #[serde(default)]
+    pub has_conflicts: bool,
+    pub diverged_commits_count: Option<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ProjectInfo {
     default_branch: String,
@@ -509,6 +523,40 @@ impl GitLabClient {
 
         self.send_with_retry(req).await?;
         debug!("Accepted MR !{}", mr_iid);
+        Ok(())
+    }
+
+    /// Fetch the detailed view of a single MR (includes has_conflicts and diverged_commits_count).
+    pub async fn get_mr_detail(&self, project: &str, mr_iid: u64) -> Result<MrDetail> {
+        let url = self.api_url(&format!(
+            "/projects/{}/merge_requests/{}",
+            Self::encode_project(project),
+            mr_iid,
+        ));
+
+        let req = self.client.get(&url).header(PRIVATE_TOKEN, &self.token);
+        let resp = self.send_with_retry(req).await?;
+        let detail: MrDetail = resp.json().await?;
+        Ok(detail)
+    }
+
+    /// Trigger a GitLab-side rebase of the MR's source branch onto its target branch.
+    /// Uses PUT /projects/:id/merge_requests/:iid/rebase
+    pub async fn rebase_mr(&self, project: &str, mr_iid: u64) -> Result<()> {
+        let url = self.api_url(&format!(
+            "/projects/{}/merge_requests/{}/rebase",
+            Self::encode_project(project),
+            mr_iid,
+        ));
+
+        let req = self
+            .client
+            .put(&url)
+            .header(PRIVATE_TOKEN, &self.token)
+            .json(&serde_json::json!({}));
+
+        self.send_with_retry(req).await?;
+        debug!("Triggered rebase for MR !{}", mr_iid);
         Ok(())
     }
 

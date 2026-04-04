@@ -15,7 +15,7 @@ impl GitRepo {
     }
 
     /// Run a git subcommand in the repo directory, returning stdout on success.
-    async fn run(&self, args: &[&str]) -> Result<String> {
+    pub(crate) async fn run(&self, args: &[&str]) -> Result<String> {
         self.run_in(&self.path, args).await
     }
 
@@ -190,6 +190,60 @@ impl GitRepo {
         }
         tokio::fs::write(&full_path, content).await?;
         Ok(())
+    }
+
+    /// Rebase `branch` onto `onto`.
+    /// Checks out `branch`, runs `git rebase onto`, then returns to the
+    /// previously active branch.
+    pub async fn rebase(&self, branch: &str, onto: &str) -> Result<()> {
+        let original = self.current_branch().await?;
+        self.checkout(branch).await?;
+
+        let result = self.run(&["rebase", onto]).await;
+
+        // Always try to return to the original branch, even on error.
+        if let Err(e) = self.checkout(&original).await {
+            tracing::warn!("Failed to restore branch '{}' after rebase: {}", original, e);
+        }
+
+        result.map(|_| ())
+    }
+
+    /// Return true if merging `branch` into the current HEAD would produce conflicts.
+    /// Uses `git merge --no-commit --no-ff` as a dry-run, then always aborts.
+    pub async fn has_conflicts(&self, branch: &str) -> Result<bool> {
+        // Run the merge attempt and capture both stdout and stderr directly so
+        // we can inspect the output regardless of exit code.
+        let output = tokio::process::Command::new("git")
+            .args(["merge", "--no-commit", "--no-ff", branch])
+            .current_dir(&self.path)
+            .output()
+            .await
+            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git merge: {}", e)))?;
+
+        // Always abort so the working tree is left clean.
+        let _ = self.run(&["merge", "--abort"]).await;
+
+        if output.status.success() {
+            // Clean merge — also reset to undo the automatic merge commit staging.
+            let _ = self.run(&["reset", "--hard", "HEAD"]).await;
+            return Ok(false);
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{}{}", stdout, stderr);
+
+        if combined.to_ascii_lowercase().contains("conflict") {
+            return Ok(true);
+        }
+
+        // Exit code 1 without "conflict" wording means a genuine git error.
+        let exit_code = output.status.code().unwrap_or(-1);
+        Err(ReforgeError::GitCommand {
+            exit_code,
+            stderr: stderr.trim().to_string(),
+        })
     }
 
     /// Verify that the directory is actually a git repository.
@@ -368,5 +422,97 @@ mod tests {
             }
             other => panic!("Expected GitCommand error, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn test_rebase_branch_onto_updated_base() {
+        let (_dir, repo) = init_repo().await;
+        let base = repo.current_branch().await.unwrap();
+
+        // Create feature branch from current base.
+        repo.create_branch("feature/rebase-test", &base)
+            .await
+            .unwrap();
+
+        // Go back to base, add a new commit.
+        repo.checkout(&base).await.unwrap();
+        repo.write_file("base-update.txt", "base commit\n")
+            .await
+            .unwrap();
+        repo.add_and_commit("base-update.txt", "chore: base update")
+            .await
+            .unwrap();
+
+        // Add a commit on feature branch.
+        repo.checkout("feature/rebase-test").await.unwrap();
+        repo.write_file("feature.txt", "feature work\n")
+            .await
+            .unwrap();
+        repo.add_and_commit("feature.txt", "feat: add feature")
+            .await
+            .unwrap();
+
+        // Return to base before calling rebase.
+        repo.checkout(&base).await.unwrap();
+
+        // Rebase feature onto base.
+        repo.rebase("feature/rebase-test", &base).await.unwrap();
+
+        // Verify feature branch now contains both commits.
+        repo.checkout("feature/rebase-test").await.unwrap();
+        let log = repo.log(5).await.unwrap();
+        let subjects: Vec<&str> = log.iter().map(|e| e.subject.as_str()).collect();
+        assert!(subjects.contains(&"chore: base update"));
+        assert!(subjects.contains(&"feat: add feature"));
+    }
+
+    #[tokio::test]
+    async fn test_has_conflicts_clean_merge() {
+        let (_dir, repo) = init_repo().await;
+        let base = repo.current_branch().await.unwrap();
+
+        // Create a side branch that touches a different file.
+        repo.create_branch("side/no-conflict", &base).await.unwrap();
+        repo.write_file("side.txt", "side content\n").await.unwrap();
+        repo.add_and_commit("side.txt", "side: add file").await.unwrap();
+
+        // Return to base — merging side/no-conflict should have no conflicts.
+        repo.checkout(&base).await.unwrap();
+        let conflicts = repo.has_conflicts("side/no-conflict").await.unwrap();
+        assert!(!conflicts, "expected no conflicts");
+    }
+
+    #[tokio::test]
+    async fn test_has_conflicts_detects_conflict() {
+        let (_dir, repo) = init_repo().await;
+        let base = repo.current_branch().await.unwrap();
+
+        // Write initial version of a shared file and commit it.
+        repo.write_file("shared.txt", "original\n").await.unwrap();
+        repo.add_and_commit("shared.txt", "init: shared file")
+            .await
+            .unwrap();
+
+        // Create a branch that changes the shared file.
+        repo.create_branch("conflict-branch", &base).await.unwrap();
+        repo.write_file("shared.txt", "branch version\n")
+            .await
+            .unwrap();
+        repo.add_and_commit("shared.txt", "branch: edit shared")
+            .await
+            .unwrap();
+
+        // Back on base, make a conflicting change to the same file.
+        repo.checkout(&base).await.unwrap();
+        repo.write_file("shared.txt", "base version\n")
+            .await
+            .unwrap();
+        repo.add_and_commit("shared.txt", "base: edit shared")
+            .await
+            .unwrap();
+
+        // Now merging conflict-branch should produce a conflict.
+        let conflicts = repo.has_conflicts("conflict-branch").await.unwrap();
+        assert!(conflicts, "expected conflicts to be detected");
     }
 }

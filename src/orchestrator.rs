@@ -12,6 +12,7 @@ use crate::grouping::{group_candidates, Group};
 use crate::manager::{Dependency, PackageManager, RegistrySource};
 use crate::platform::gitlab::{CreateMrParams, GitLabClient};
 use crate::platform::{FileSource, GitLabSource, LocalGitSource};
+use crate::rebase::{handle_stale_mrs, StalenessChecker};
 use crate::registry::docker::DockerRegistryClient;
 use crate::registry::helm::HelmRegistryClient;
 use crate::registry::{parse_version_lenient, RegistryClient, VersionInfo};
@@ -286,6 +287,16 @@ impl Orchestrator {
         default_branch: &str,
         groups: &[Group],
     ) -> Result<()> {
+        // Before processing new updates, rebase any existing reforge branches
+        // in local mode (if the strategy calls for it).
+        if self.config.merge_request.rebase_enabled {
+            if let Some(local_path) = &self.config.local_path {
+                use crate::platform::git::GitRepo;
+                let repo = GitRepo::new(local_path.clone());
+                self.rebase_local_branches(&repo, default_branch).await;
+            }
+        }
+
         for group in groups {
             if group.candidates.is_empty() {
                 continue;
@@ -480,6 +491,31 @@ impl Orchestrator {
                 Err(e) => error!("Failed to create MR for group '{}': {}", group.name, e),
             }
         }
+
+        // After creating new MRs, check existing ones for staleness.
+        if self.config.merge_request.rebase_enabled {
+            let checker = StalenessChecker::new();
+            let stale_mrs = checker
+                .check_stale_mrs(gitlab, project, &self.config.merge_request.branch_prefix)
+                .await;
+
+            if !stale_mrs.is_empty() {
+                info!(
+                    "Found {} stale MR(s) for project {} — applying strategy '{:?}'",
+                    stale_mrs.len(),
+                    project,
+                    self.config.merge_request.stale_mr_strategy,
+                );
+                handle_stale_mrs(
+                    gitlab,
+                    project,
+                    &stale_mrs,
+                    &self.config.merge_request.stale_mr_strategy,
+                )
+                .await;
+            }
+        }
+
         Ok(())
     }
 
@@ -768,6 +804,99 @@ impl Orchestrator {
         }
 
         all_vulns
+    }
+
+    /// In local mode, iterate local branches with the reforge prefix and rebase
+    /// any that are behind the default branch or have conflicts.
+    async fn rebase_local_branches(
+        &self,
+        repo: &crate::platform::git::GitRepo,
+        default_branch: &str,
+    ) {
+        use crate::rebase::StaleMrStrategy;
+
+        let strategy = &self.config.merge_request.stale_mr_strategy;
+        if *strategy == StaleMrStrategy::Ignore {
+            return;
+        }
+
+        let prefix = &self.config.merge_request.branch_prefix;
+
+        // Enumerate local branches.
+        let branches: Vec<String> = match repo.run(&["branch", "--list", &format!("{}*", prefix)]).await {
+            Ok(out) => out
+                .lines()
+                .map(|l: &str| l.trim().trim_start_matches("* ").to_string())
+                .filter(|b: &String| !b.is_empty())
+                .collect(),
+            Err(e) => {
+                warn!("Failed to list local reforge branches: {}", e);
+                return;
+            }
+        };
+
+        for branch in &branches {
+            // Check for conflicts by dry-run merging into default_branch.
+            let original = match repo.current_branch().await {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+
+            // Check if branch is behind: compare merge-base with default_branch tip.
+            let is_behind = match repo
+                .run(&["merge-base", "--is-ancestor", default_branch, branch])
+                .await
+            {
+                // exit 0 means default_branch is an ancestor of branch (branch is up to date)
+                Ok(_) => false,
+                // exit 1 means not an ancestor (branch is behind)
+                Err(_) => true,
+            };
+
+            // Check conflicts by checking out default and doing a dry-run merge.
+            let _ = repo.checkout(default_branch).await;
+            let has_conflicts = match repo.has_conflicts(branch).await {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Could not check conflicts for branch '{}': {}", branch, e);
+                    let _ = repo.checkout(&original).await;
+                    continue;
+                }
+            };
+            let _ = repo.checkout(&original).await;
+
+            if !is_behind && !has_conflicts {
+                continue;
+            }
+
+            info!(
+                "Local branch '{}' is stale (behind={}, conflicts={}) — applying strategy '{:?}'",
+                branch, is_behind, has_conflicts, strategy
+            );
+
+            match strategy {
+                StaleMrStrategy::Rebase => {
+                    if let Err(e) = repo.rebase(branch, default_branch).await {
+                        warn!("Failed to rebase local branch '{}': {}", branch, e);
+                    } else {
+                        info!("Rebased local branch '{}' onto '{}'", branch, default_branch);
+                    }
+                }
+                StaleMrStrategy::Recreate => {
+                    // For local mode, recreate = delete branch and re-create from default.
+                    // The update will be re-applied on the next scan.
+                    if let Err(e) = repo
+                        .run(&["branch", "-D", branch])
+                        .await
+                    {
+                        warn!("Failed to delete local branch '{}': {}", branch, e);
+                    } else {
+                        info!("Deleted stale local branch '{}' (will be recreated on next scan)", branch);
+                    }
+                }
+                StaleMrStrategy::Ignore => {}
+            }
+        }
     }
 
     fn branch_name_for(&self, dep: &Dependency, new_version: &VersionInfo) -> String {
