@@ -45,6 +45,10 @@ struct Cli {
     /// Output dry-run results as JSON
     #[arg(long)]
     json: bool,
+
+    /// Path to a local git repository checkout (enables local mode, bypasses GitLab API)
+    #[arg(long)]
+    local_path: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -66,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
         token: cli.token,
         gitlab_url: cli.gitlab_url,
         repo: cli.repo,
+        local_path: cli.local_path,
     };
 
     let config = if cli.config.exists() {

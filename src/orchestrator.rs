@@ -5,7 +5,8 @@ use tracing::{debug, error, info, warn};
 use crate::config::Config;
 use crate::error::Result;
 use crate::manager::{Dependency, PackageManager, RegistrySource};
-use crate::platform::gitlab::{CommitAction, CreateMrParams, GitLabClient};
+use crate::platform::gitlab::{CreateMrParams, GitLabClient};
+use crate::platform::{FileSource, GitLabSource, LocalGitSource};
 use crate::registry::docker::DockerRegistryClient;
 use crate::registry::helm::HelmRegistryClient;
 use crate::registry::{parse_version_lenient, RegistryClient, VersionInfo};
@@ -16,7 +17,8 @@ const CONCURRENCY_LIMIT: usize = 5;
 
 pub struct Orchestrator {
     config: Config,
-    gitlab: GitLabClient,
+    /// Only used in GitLab mode for MR creation.
+    gitlab: Option<GitLabClient>,
     docker_registry: DockerRegistryClient,
     helm_registry: HelmRegistryClient,
     managers: Vec<Box<dyn PackageManager>>,
@@ -33,12 +35,13 @@ pub struct UpdateCandidate {
 
 impl Orchestrator {
     pub fn new(config: Config, dry_run: bool) -> Result<Self> {
-        let token = config
-            .gitlab
-            .token
-            .as_deref()
-            .unwrap_or("");
-        let gitlab = GitLabClient::new(&config.gitlab.url, token)?;
+        // Only construct a GitLab client when not in local mode.
+        let gitlab = if config.local_path.is_none() {
+            let token = config.gitlab.token.as_deref().unwrap_or("");
+            Some(GitLabClient::new(&config.gitlab.url, token)?)
+        } else {
+            None
+        };
 
         let docker_registry = DockerRegistryClient::new(config.registries.clone());
         let helm_registry = HelmRegistryClient::new(config.registries.clone());
@@ -67,45 +70,53 @@ impl Orchestrator {
     }
 
     pub async fn run(&self) -> Result<()> {
+        if let Some(local_path) = &self.config.local_path {
+            info!("Running in local mode against {:?}", local_path);
+            let source = LocalGitSource::new(local_path.clone());
+            source.repo.validate().await?;
+            return self.process_with_source(&source, local_path.display().to_string().as_str()).await;
+        }
+
         if self.config.scan.projects.is_empty() {
             warn!("No projects configured to scan");
             return Ok(());
         }
 
+        let gitlab = self.gitlab.as_ref().expect("GitLab client required in API mode");
+
         for project in &self.config.scan.projects {
             info!("Scanning project: {}", project);
-            if let Err(e) = self.process_project(project).await {
+            let source = GitLabSource {
+                client: GitLabClient::new(&self.config.gitlab.url, self.config.gitlab.token.as_deref().unwrap_or(""))?,
+                project: project.clone(),
+            };
+            if let Err(e) = self.process_with_source(&source, project).await {
                 error!("Error processing project {}: {}", project, e);
             }
+            let _ = gitlab; // ensure borrow extends to here
         }
 
         Ok(())
     }
 
-    async fn process_project(&self, project: &str) -> Result<()> {
-        let default_branch = self.gitlab.get_default_branch(project).await?;
+    async fn process_with_source(&self, source: &dyn FileSource, label: &str) -> Result<()> {
+        let default_branch = source.default_branch().await?;
         info!("Default branch: {}", default_branch);
 
-        let tree = self
-            .gitlab
-            .list_tree(project, &default_branch, None, true)
-            .await?;
-
-        let file_paths: Vec<String> = tree
-            .iter()
-            .filter(|entry| entry.entry_type == "blob")
-            .filter(|entry| self.matches_any_pattern(&entry.path))
-            .map(|entry| entry.path.clone())
+        let entries = source.list_files(&default_branch).await?;
+        let file_paths: Vec<String> = entries
+            .into_iter()
+            .filter(|e| self.matches_any_pattern(&e.path))
+            .map(|e| e.path)
             .collect();
 
         info!("Found {} matching files", file_paths.len());
 
-        // Extract dependencies from all matching files
         let mut all_deps: Vec<(Dependency, String)> = Vec::new();
 
         for file_path in &file_paths {
             debug!("Fetching file: {}", file_path);
-            let contents = match self.gitlab.get_file(project, file_path, &default_branch).await {
+            let contents = match source.get_file(file_path, &default_branch).await {
                 Ok(c) => c,
                 Err(e) => {
                     warn!("Failed to fetch {}: {}", file_path, e);
@@ -142,11 +153,8 @@ impl Orchestrator {
 
         info!("Extracted {} total dependencies", all_deps.len());
 
-        // Fetch available versions concurrently
         let candidates: Vec<UpdateCandidate> = stream::iter(all_deps)
-            .map(|(dep, content)| async move {
-                self.check_for_update(dep, content).await
-            })
+            .map(|(dep, content)| async move { self.check_for_update(dep, content).await })
             .buffer_unordered(CONCURRENCY_LIMIT)
             .filter_map(|result| async move {
                 match result {
@@ -168,9 +176,98 @@ impl Orchestrator {
             return Ok(());
         }
 
-        // Check existing MRs to avoid duplicates
-        let existing_mrs = self
-            .gitlab
+        // In local mode we commit directly; in GitLab mode we create MRs.
+        if self.config.local_path.is_some() {
+            self.apply_local_updates(source, &default_branch, &candidates)
+                .await?;
+        } else {
+            self.create_gitlab_mrs(source, label, &default_branch, &candidates)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn apply_local_updates(
+        &self,
+        source: &dyn FileSource,
+        default_branch: &str,
+        candidates: &[UpdateCandidate],
+    ) -> Result<()> {
+        for candidate in candidates {
+            let branch_name =
+                self.branch_name_for(&candidate.dependency, &candidate.new_version);
+
+            let already_exists = source.branch_exists(&branch_name).await?;
+            if already_exists {
+                info!(
+                    "Branch already exists for {} -> {} (branch: {}), skipping",
+                    candidate.dependency.name,
+                    candidate.new_version.original_tag,
+                    branch_name
+                );
+                continue;
+            }
+
+            let file_update = match updater::apply_update(
+                &candidate.dependency,
+                &candidate.new_version.original_tag,
+                &candidate.file_content,
+            ) {
+                Ok(u) => u,
+                Err(e) => {
+                    error!(
+                        "Failed to apply update for {}: {}",
+                        candidate.dependency.name, e
+                    );
+                    continue;
+                }
+            };
+
+            if let Err(e) = source.create_branch(&branch_name, default_branch).await {
+                error!("Failed to create branch {}: {}", branch_name, e);
+                continue;
+            }
+
+            let commit_msg = format!(
+                "chore(deps): update {} from {} to {}",
+                candidate.dependency.name,
+                candidate.dependency.current_version,
+                candidate.new_version.original_tag,
+            );
+
+            match source
+                .commit_file(
+                    &branch_name,
+                    &file_update.file_path,
+                    &file_update.updated_content,
+                    &commit_msg,
+                )
+                .await
+            {
+                Ok(commit) => info!(
+                    "Committed update for {} on branch {} ({})",
+                    candidate.dependency.name, branch_name, commit
+                ),
+                Err(e) => error!(
+                    "Failed to commit update for {}: {}",
+                    candidate.dependency.name, e
+                ),
+            }
+        }
+        Ok(())
+    }
+
+    async fn create_gitlab_mrs(
+        &self,
+        source: &dyn FileSource,
+        project: &str,
+        default_branch: &str,
+        candidates: &[UpdateCandidate],
+    ) -> Result<()> {
+        let gitlab = self.gitlab.as_ref().expect("GitLab client required");
+
+        let existing_mrs = gitlab
             .list_open_mrs(project, Some(&self.config.merge_request.branch_prefix))
             .await?;
         let existing_branches: HashSet<String> = existing_mrs
@@ -178,8 +275,9 @@ impl Orchestrator {
             .map(|mr| mr.source_branch.clone())
             .collect();
 
-        for candidate in &candidates {
-            let branch_name = self.branch_name_for(&candidate.dependency, &candidate.new_version);
+        for candidate in candidates {
+            let branch_name =
+                self.branch_name_for(&candidate.dependency, &candidate.new_version);
 
             if existing_branches.contains(&branch_name) {
                 info!(
@@ -192,7 +290,7 @@ impl Orchestrator {
             }
 
             if let Err(e) = self
-                .create_update_mr(project, &default_branch, candidate, &branch_name)
+                .create_update_mr(source, gitlab, project, default_branch, candidate, &branch_name)
                 .await
             {
                 error!(
@@ -201,7 +299,6 @@ impl Orchestrator {
                 );
             }
         }
-
         Ok(())
     }
 
@@ -254,6 +351,8 @@ impl Orchestrator {
 
     async fn create_update_mr(
         &self,
+        source: &dyn FileSource,
+        gitlab: &GitLabClient,
         project: &str,
         default_branch: &str,
         candidate: &UpdateCandidate,
@@ -265,12 +364,8 @@ impl Orchestrator {
             &candidate.file_content,
         )?;
 
-        // Create branch
-        self.gitlab
-            .create_branch(project, branch_name, default_branch)
-            .await?;
+        source.create_branch(branch_name, default_branch).await?;
 
-        // Commit updated file
         let commit_msg = format!(
             "chore(deps): update {} from {} to {}",
             candidate.dependency.name,
@@ -278,20 +373,15 @@ impl Orchestrator {
             candidate.new_version.original_tag,
         );
 
-        self.gitlab
-            .commit_files(
-                project,
+        source
+            .commit_file(
                 branch_name,
+                &file_update.file_path,
+                &file_update.updated_content,
                 &commit_msg,
-                vec![CommitAction {
-                    action: "update".to_string(),
-                    file_path: file_update.file_path.clone(),
-                    content: file_update.updated_content,
-                }],
             )
             .await?;
 
-        // Determine manager name for MR body
         let manager_name = match &candidate.dependency.registry {
             RegistrySource::DockerRegistry { .. } => "docker",
             RegistrySource::HelmRepository { .. } => "helm",
@@ -316,8 +406,7 @@ impl Orchestrator {
             candidate.dependency.name, candidate.new_version.original_tag,
         );
 
-        let mr = self
-            .gitlab
+        let mr = gitlab
             .create_mr(
                 project,
                 CreateMrParams {
@@ -366,7 +455,6 @@ impl Orchestrator {
         let filename = path.rsplit('/').next().unwrap_or(path);
         manager.file_patterns().iter().any(|pattern| {
             if pattern.contains('*') {
-                // Simple glob: "Dockerfile.*" or "values-*.yaml"
                 let parts: Vec<&str> = pattern.split('*').collect();
                 if parts.len() == 2 {
                     filename.starts_with(parts[0]) && filename.ends_with(parts[1])

@@ -12,6 +12,18 @@ pub enum ReforgeError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    #[error("Git command failed (exit {exit_code}): {stderr}")]
+    GitCommand { exit_code: i32, stderr: String },
+
+    #[error("Git repository not found at {path}")]
+    GitRepoNotFound { path: String },
+
+    #[error("Git branch '{branch}' already exists")]
+    GitBranchExists { branch: String },
+
+    #[error("Git operation failed: {0}")]
+    Git(String),
+
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 

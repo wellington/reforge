@@ -1,11 +1,12 @@
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ReforgeError, Result};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub gitlab: GitLabConfig,
     #[serde(default)]
     pub scan: ScanConfig,
@@ -17,13 +18,30 @@ pub struct Config {
     pub merge_request: MergeRequestConfig,
     #[serde(default)]
     pub registries: HashMap<String, RegistryCredential>,
+    /// When set, operate against a local git checkout instead of the GitLab API.
+    #[serde(default)]
+    pub local_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitLabConfig {
+    #[serde(default = "default_gitlab_url")]
     pub url: String,
     #[serde(default)]
     pub token: Option<String>,
+}
+
+fn default_gitlab_url() -> String {
+    "https://gitlab.com".to_string()
+}
+
+impl Default for GitLabConfig {
+    fn default() -> Self {
+        Self {
+            url: default_gitlab_url(),
+            token: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -148,21 +166,23 @@ impl Config {
         if let Some(repo) = cli_overrides.repo {
             config.scan.projects = vec![repo];
         }
+        if let Some(local_path) = cli_overrides.local_path {
+            config.local_path = Some(local_path);
+        }
 
         Ok(config)
     }
 
     /// Build a minimal config purely from CLI args and env vars (no config file).
     pub fn from_cli(cli_overrides: CliOverrides) -> Result<Self> {
+        let local_path = cli_overrides.local_path;
+
+        // GitLab URL is optional when in local mode
         let url = cli_overrides
             .gitlab_url
             .or_else(|| std::env::var("REFORGE_GITLAB_URL").ok())
             .or_else(|| std::env::var("RENOVATE_GITLAB_URL").ok())
-            .ok_or_else(|| {
-                ReforgeError::Config(
-                    "GitLab URL required via --gitlab-url or REFORGE_GITLAB_URL".to_string(),
-                )
-            })?;
+            .unwrap_or_else(default_gitlab_url);
 
         let token = cli_overrides
             .token
@@ -181,6 +201,7 @@ impl Config {
             versioning: VersioningConfig::default(),
             merge_request: MergeRequestConfig::default(),
             registries: HashMap::new(),
+            local_path,
         })
     }
 }
@@ -190,4 +211,5 @@ pub struct CliOverrides {
     pub token: Option<String>,
     pub gitlab_url: Option<String>,
     pub repo: Option<String>,
+    pub local_path: Option<PathBuf>,
 }
