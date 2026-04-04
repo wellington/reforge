@@ -21,6 +21,8 @@ pub struct Config {
     pub registries: HashMap<String, RegistryCredential>,
     #[serde(default)]
     pub dashboard: DashboardConfig,
+    #[serde(default)]
+    pub changelog: ChangelogConfig,
     /// When set, operate against a local git checkout instead of the GitLab API.
     #[serde(default)]
     pub local_path: Option<PathBuf>,
@@ -331,6 +333,37 @@ fn default_dashboard_local_path() -> String {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct ChangelogConfig {
+    /// Whether to fetch and embed changelog / release notes in MR descriptions.
+    #[serde(default = "default_changelog_enabled")]
+    pub enabled: bool,
+    /// Maximum number of characters to include before truncating.
+    #[serde(default = "default_changelog_max_length")]
+    pub max_length: usize,
+    /// GitHub personal access token for the releases API (loaded from GITHUB_TOKEN env).
+    #[serde(skip)]
+    pub github_token: Option<String>,
+}
+
+fn default_changelog_enabled() -> bool {
+    true
+}
+
+fn default_changelog_max_length() -> usize {
+    2000
+}
+
+impl Default for ChangelogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_changelog_enabled(),
+            max_length: default_changelog_max_length(),
+            github_token: std::env::var("GITHUB_TOKEN").ok(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct RegistryCredential {
     pub username: Option<String>,
     pub password_env: Option<String>,
@@ -352,6 +385,11 @@ impl Config {
 
         let mut config: Config = toml::from_str(&contents)
             .map_err(|e| ReforgeError::Config(format!("Invalid config: {}", e)))?;
+
+        // Populate changelog token from env (field is skipped during deserialization).
+        if config.changelog.github_token.is_none() {
+            config.changelog.github_token = std::env::var("GITHUB_TOKEN").ok();
+        }
 
         // Layer env vars (REFORGE_ preferred, RENOVATE_ accepted for migration)
         if config.gitlab.token.is_none() {
@@ -416,6 +454,7 @@ impl Config {
             merge_request: MergeRequestConfig::default(),
             registries: HashMap::new(),
             dashboard: DashboardConfig::default(),
+            changelog: ChangelogConfig::default(),
             local_path,
             regex_managers: vec![],
         })

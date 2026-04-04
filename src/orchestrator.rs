@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, error, info, warn};
 
 use crate::automerge::{AutomergeEvaluator, UpdateType};
+use crate::changelog::{self, ChangelogFetcher};
 use crate::config::Config;
 use crate::dashboard;
 use crate::error::Result;
@@ -34,6 +35,7 @@ pub struct Orchestrator {
     version_policy: VersionPolicy,
     dry_run: bool,
     dashboard_enabled: bool,
+    changelog_fetcher: ChangelogFetcher,
 }
 
 #[derive(Debug)]
@@ -82,6 +84,9 @@ impl Orchestrator {
         let strategy = PinStrategy::from_str(&config.versioning.pin_strategy);
         let version_policy = VersionPolicy::new(strategy);
 
+        let changelog_fetcher =
+            ChangelogFetcher::new(config.changelog.github_token.clone());
+
         Ok(Self {
             config,
             gitlab,
@@ -92,6 +97,7 @@ impl Orchestrator {
             version_policy,
             dry_run,
             dashboard_enabled,
+            changelog_fetcher,
         })
     }
 
@@ -573,7 +579,8 @@ impl Orchestrator {
                 .await?;
         }
 
-        let (mr_title, mr_body) = self.build_group_mr_content(group);
+        let changelog_notes = self.maybe_fetch_changelog(group).await;
+        let (mr_title, mr_body) = self.build_group_mr_content(group, changelog_notes.as_deref());
 
         // Automerge: only enable when the group contains a single dependency.
         let use_automerge = if group.candidates.len() == 1 {
@@ -611,7 +618,11 @@ impl Orchestrator {
     }
 
     /// Build the MR title and body for a group of update candidates.
-    fn build_group_mr_content(&self, group: &Group) -> (String, String) {
+    fn build_group_mr_content(
+        &self,
+        group: &Group,
+        changelog_notes: Option<&str>,
+    ) -> (String, String) {
         let title = if group.candidates.len() == 1 {
             let c = &group.candidates[0];
             format!(
@@ -639,18 +650,61 @@ impl Orchestrator {
             ));
         }
 
+        let changelog_section = match changelog_notes {
+            Some(notes) if !notes.is_empty() => {
+                let truncated =
+                    changelog::truncate_changelog(notes, self.config.changelog.max_length);
+                format!("\n\n{}", changelog::render_changelog_section(&truncated))
+            }
+            _ => String::new(),
+        };
+
         let body = format!(
             "## Dependency Update{}\n\n\
              | Package | Manager | File | Current | New |\n\
              |---------|---------|------|---------|-----|\n\
              {}\n\
-             ---\n\n\
+             {}---\n\n\
              *This MR was automatically created by reforge.*",
             if group.candidates.len() > 1 { "s" } else { "" },
             rows,
+            changelog_section,
         );
 
         (title, body)
+    }
+
+    /// Attempt to fetch changelog/release notes for a single-dependency group.
+    /// Returns `None` for grouped updates or when the changelog feature is disabled.
+    async fn maybe_fetch_changelog(&self, group: &Group) -> Option<String> {
+        if !self.config.changelog.enabled {
+            return None;
+        }
+        // Only fetch for single-dependency updates.
+        if group.candidates.len() != 1 {
+            return None;
+        }
+        let candidate = &group.candidates[0];
+        let registry_source_str = match &candidate.dependency.registry {
+            RegistrySource::DockerRegistry { image, .. } => image.clone(),
+            RegistrySource::HelmRepository { repo_url, chart_name, .. } => {
+                format!("{}/{}", repo_url, chart_name)
+            }
+            RegistrySource::OciHelmRegistry { registry, image } => {
+                match registry {
+                    Some(r) => format!("{}/{}", r, image),
+                    None => image.clone(),
+                }
+            }
+        };
+        self.changelog_fetcher
+            .fetch_release_notes(
+                &candidate.dependency.name,
+                Some(&registry_source_str),
+                &candidate.dependency.current_version,
+                &candidate.new_version.original_tag,
+            )
+            .await
     }
 
     fn branch_name_for(&self, dep: &Dependency, new_version: &VersionInfo) -> String {
