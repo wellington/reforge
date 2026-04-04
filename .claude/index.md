@@ -11,3 +11,4 @@ Read this file at the start of every session. Scan for entries relevant to the c
 | [initial-build-session.md](knowledge/initial-build-session.md) | Observation | Archived | Details from the first build session; superseded by todo-completion.md |
 | [agent-orchestration-strategy.md](knowledge/agent-orchestration-strategy.md) | Decision | Archived | Todo items implemented via separate background agents; strategy is complete |
 | [todo-completion.md](knowledge/todo-completion.md) | Observation | Active | All 11 original features implemented; 167 tests; live GitLab MR creation verified; new todo backlog in todo/ |
+| [renovate-compatibility.md](knowledge/renovate-compatibility.md) | Decision | Active | Must support Renovate parameters/features for drop-in compatibility; investigate API gaps next session |
