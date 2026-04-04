@@ -1,5 +1,6 @@
 pub mod docker;
 pub mod helm;
+pub mod regex;
 
 use async_trait::async_trait;
 
@@ -41,6 +42,14 @@ pub enum UpdateContext {
     DockerComposeImage {
         service_path: Vec<String>,
         full_reference: String,
+    },
+    /// A match produced by a custom regex manager.
+    /// The updater performs a literal string replacement of `old_value` → new version.
+    RegexMatch {
+        /// The full text that was matched by the regex (used to locate the span).
+        matched_text: String,
+        /// The captured `currentValue` within that match (to be replaced).
+        old_value: String,
     },
 }
 

@@ -27,6 +27,10 @@ pub struct Orchestrator {
     docker_registry: DockerRegistryClient,
     helm_registry: HelmRegistryClient,
     managers: Vec<Box<dyn PackageManager>>,
+    /// Dynamic file-pattern sets for regex managers (parallel to the regex manager
+    /// entries appended to `managers`). Each entry is the list of glob patterns for
+    /// one regex manager.
+    regex_manager_patterns: Vec<Vec<String>>,
     version_policy: VersionPolicy,
     dry_run: bool,
     dashboard_enabled: bool,
@@ -61,6 +65,20 @@ impl Orchestrator {
             }
         }
 
+        let mut regex_manager_patterns: Vec<Vec<String>> = Vec::new();
+        for rm_config in &config.regex_managers {
+            match crate::manager::regex::RegexManager::new(rm_config.clone()) {
+                Ok(mgr) => {
+                    info!("Loaded regex manager '{}'", rm_config.name);
+                    regex_manager_patterns.push(rm_config.file_patterns.clone());
+                    managers.push(Box::new(mgr));
+                }
+                Err(e) => {
+                    warn!("Skipping regex manager '{}': {}", rm_config.name, e);
+                }
+            }
+        }
+
         let strategy = PinStrategy::from_str(&config.versioning.pin_strategy);
         let version_policy = VersionPolicy::new(strategy);
 
@@ -70,6 +88,7 @@ impl Orchestrator {
             docker_registry,
             helm_registry,
             managers,
+            regex_manager_patterns,
             version_policy,
             dry_run,
             dashboard_enabled,
@@ -669,23 +688,53 @@ impl Orchestrator {
     fn matches_any_pattern(&self, path: &str) -> bool {
         self.managers
             .iter()
-            .any(|m| self.file_matches_manager(path, m.as_ref()))
+            .enumerate()
+            .any(|(idx, m)| self.file_matches_manager_at(path, m.as_ref(), idx))
     }
 
     fn file_matches_manager(&self, path: &str, manager: &dyn PackageManager) -> bool {
-        let filename = path.rsplit('/').next().unwrap_or(path);
-        manager.file_patterns().iter().any(|pattern| {
-            if pattern.contains('*') {
-                let parts: Vec<&str> = pattern.split('*').collect();
-                if parts.len() == 2 {
-                    filename.starts_with(parts[0]) && filename.ends_with(parts[1])
+        // Find the index of this manager by pointer comparison.
+        let idx = self
+            .managers
+            .iter()
+            .position(|m| std::ptr::eq(m.as_ref() as *const _, manager as *const _))
+            .unwrap_or(usize::MAX);
+        self.file_matches_manager_at(path, manager, idx)
+    }
+
+    fn file_matches_manager_at(&self, path: &str, manager: &dyn PackageManager, idx: usize) -> bool {
+        let static_patterns = manager.file_patterns();
+
+        if !static_patterns.is_empty() {
+            // Built-in manager with static patterns.
+            let filename = path.rsplit('/').next().unwrap_or(path);
+            return static_patterns.iter().any(|pattern| {
+                if pattern.contains('*') {
+                    let parts: Vec<&str> = pattern.split('*').collect();
+                    if parts.len() == 2 {
+                        filename.starts_with(parts[0]) && filename.ends_with(parts[1])
+                    } else {
+                        filename == *pattern
+                    }
                 } else {
                     filename == *pattern
                 }
-            } else {
-                filename == *pattern
+            });
+        }
+
+        // Regex manager: look up dynamic patterns by index offset.
+        // Regex managers are appended after built-in managers.
+        let builtin_count = self.managers.len() - self.regex_manager_patterns.len();
+        if idx >= builtin_count {
+            let rm_idx = idx - builtin_count;
+            if let Some(patterns) = self.regex_manager_patterns.get(rm_idx) {
+                return patterns
+                    .iter()
+                    .any(|p| crate::manager::regex::file_matches_pattern(path, p));
             }
-        })
+        }
+
+        false
     }
 
     fn print_dry_run_report(&self, candidates: &[UpdateCandidate]) {

@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,63 @@ pub struct Config {
     /// When set, operate against a local git checkout instead of the GitLab API.
     #[serde(default)]
     pub local_path: Option<PathBuf>,
+    /// Custom regex-based managers.
+    #[serde(default)]
+    pub regex_managers: Vec<RegexManagerConfig>,
+}
+
+/// Configuration for a single custom regex manager.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RegexManagerConfig {
+    /// Human-readable name for this manager (used in logs and branch names).
+    pub name: String,
+    /// Glob-style file patterns this manager should match (e.g. `["*.yaml"]`).
+    pub file_patterns: Vec<String>,
+    /// Regex with named capture groups: `depName`, `currentValue`.
+    /// Optional groups: `registryUrl`, `datasource`.
+    pub match_pattern: String,
+    /// Datasource to use when looking up versions: `docker`, `helm-oci`, or `helm-repo`.
+    pub datasource: String,
+    /// Registry URL override (used when the regex does not capture `registryUrl`).
+    #[serde(default)]
+    pub registry_url: Option<String>,
+    /// Versioning scheme override (currently informational).
+    #[serde(default)]
+    pub versioning: Option<String>,
+}
+
+impl RegexManagerConfig {
+    /// Validate the config: compile the regex and check for required named groups.
+    pub fn validate(&self) -> Result<()> {
+        let re = Regex::new(&self.match_pattern).map_err(|e| {
+            ReforgeError::Config(format!(
+                "regex_manager '{}': invalid match_pattern: {}",
+                self.name, e
+            ))
+        })?;
+
+        let names: Vec<&str> = re.capture_names().flatten().collect();
+        for required in &["depName", "currentValue"] {
+            if !names.contains(required) {
+                return Err(ReforgeError::Config(format!(
+                    "regex_manager '{}': match_pattern is missing required named capture group '(?P<{}>...)'",
+                    self.name, required
+                )));
+            }
+        }
+
+        match self.datasource.as_str() {
+            "docker" | "helm-oci" | "helm-repo" => {}
+            other => {
+                return Err(ReforgeError::Config(format!(
+                    "regex_manager '{}': unknown datasource '{}'; expected docker, helm-oci, or helm-repo",
+                    self.name, other
+                )));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -322,6 +380,10 @@ impl Config {
             config.local_path = Some(local_path);
         }
 
+        for rm in &config.regex_managers {
+            rm.validate()?;
+        }
+
         Ok(config)
     }
 
@@ -355,6 +417,7 @@ impl Config {
             registries: HashMap::new(),
             dashboard: DashboardConfig::default(),
             local_path,
+            regex_managers: vec![],
         })
     }
 }

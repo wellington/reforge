@@ -65,6 +65,15 @@ pub fn apply_update(
             let new_ref = old_ref.replace(&dependency.current_version, new_version);
             file_content.replace(old_ref, &new_ref)
         }
+        UpdateContext::RegexMatch {
+            matched_text,
+            old_value,
+        } => {
+            // Replace the first occurrence of the matched text, substituting
+            // the captured old_value with new_version inside it.
+            let new_match = matched_text.replacen(old_value.as_str(), new_version, 1);
+            file_content.replacen(matched_text.as_str(), &new_match, 1)
+        }
     };
 
     Ok(FileUpdate {
