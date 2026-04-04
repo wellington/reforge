@@ -1,0 +1,95 @@
+# replacements.toml — well-known Docker image and Helm chart migrations
+#
+# Load this file via reforge.toml:
+#   [replacement]
+#   rules_file = "replacements.toml"
+#
+# Each [[rules]] entry may have:
+#   old_name        — image/chart name (may end with * for glob)
+#   new_name        — replacement name (use * to carry forward wildcard suffix)
+#   old_registry    — optional registry prefix to constrain matching
+#   new_registry    — registry for the replacement
+#   reason          — human-readable migration note
+#   deprecated_only — true when there is no automated replacement (warning only)
+
+# ── Google Containers → registry.k8s.io ────────────────────────────────────
+# The gcr.io/google-containers namespace was shut down; all images moved to
+# registry.k8s.io.
+[[rules]]
+old_name     = "*"
+new_name     = "*"
+old_registry = "gcr.io/google-containers"
+new_registry = "registry.k8s.io"
+reason       = "gcr.io/google-containers is shut down. Images have moved to registry.k8s.io."
+
+# ── k8s.gcr.io → registry.k8s.io ───────────────────────────────────────────
+# k8s.gcr.io was the legacy vanity domain; it was frozen in 2023.
+[[rules]]
+old_name     = "*"
+new_name     = "*"
+old_registry = "k8s.gcr.io"
+new_registry = "registry.k8s.io"
+reason       = "k8s.gcr.io is frozen. Use registry.k8s.io instead."
+
+# ── Official nginx → rootless nginx ────────────────────────────────────────
+# The official nginx image runs as root (UID 0). The nginxinc/nginx-unprivileged
+# image is the recommended security-hardened alternative.
+[[rules]]
+old_name     = "nginx"
+new_name     = "nginxinc/nginx-unprivileged"
+old_registry = "docker.io/library"
+new_registry = "docker.io"
+reason       = "The official nginx image runs as root. Prefer nginxinc/nginx-unprivileged for a rootless setup."
+
+# ── quay.io/coreos/etcd — deprecated, no replacement ───────────────────────
+[[rules]]
+old_name        = "etcd"
+new_name        = "etcd"
+old_registry    = "quay.io/coreos"
+deprecated_only = true
+reason          = "quay.io/coreos/etcd is unmaintained. Use registry.k8s.io/etcd or your distribution's package."
+
+# ── docker.io/library/node → node (no registry prefix needed) ──────────────
+# Explicit docker.io/library prefix is redundant and may cause pull issues on
+# some runtimes that do not resolve it. Drop the prefix.
+[[rules]]
+old_name     = "library/node"
+new_name     = "node"
+old_registry = "docker.io"
+new_registry = "docker.io"
+reason       = "Use the short-form 'node' image name; the 'library/' prefix is unnecessary."
+
+# ── Deprecated: quay.io/coreos/flannel ─────────────────────────────────────
+[[rules]]
+old_name        = "flannel"
+new_name        = "flannel"
+old_registry    = "quay.io/coreos"
+deprecated_only = true
+reason          = "quay.io/coreos/flannel is no longer updated. Use docker.io/flannel/flannel instead."
+
+# ── gcr.io/distroless/* → gcr.io/distroless/* (still active — example) ─────
+# This is an informational entry showing how to track a registry move should it
+# ever happen. Currently a no-op (same registry), included as a template.
+# [[rules]]
+# old_name     = "*"
+# new_name     = "*"
+# old_registry = "gcr.io/distroless"
+# new_registry = "gcr.io/distroless"
+# reason       = "Template entry — no migration needed yet."
+
+# ── docker.io/bitnami/* → registry-1.docker.io/bitnami/* ──────────────────
+# Bitnami announced rate-limited pulls from docker.io; OCI mirror recommended.
+[[rules]]
+old_name     = "*"
+new_name     = "*"
+old_registry = "docker.io/bitnami"
+new_registry = "oci://registry-1.docker.io/bitnamicharts"
+reason       = "Bitnami Helm charts are now distributed via OCI; use the oci:// prefix."
+
+# ── Deprecated: gcr.io/google_containers/* (old spelling) ──────────────────
+[[rules]]
+old_name     = "*"
+new_name     = "*"
+old_registry = "gcr.io/google_containers"
+new_registry = "registry.k8s.io"
+reason       = "gcr.io/google_containers (underscore) is the legacy spelling. Use registry.k8s.io."

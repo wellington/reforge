@@ -17,6 +17,9 @@ use crate::rebase::{handle_stale_mrs, StalenessChecker};
 use crate::registry::docker::DockerRegistryClient;
 use crate::registry::helm::HelmRegistryClient;
 use crate::registry::{parse_version_lenient, RegistryClient, VersionInfo};
+use crate::replacement::{
+    check_dependencies, render_replacement_mr_body, ReplacementAction, ReplacementDatabase,
+};
 use crate::scheduling::{is_within_schedule_window, RateLimiter};
 use crate::updater;
 use crate::versioning::{PinStrategy, VersionPolicy};
@@ -43,6 +46,7 @@ pub struct Orchestrator {
     dashboard_enabled: bool,
     changelog_fetcher: ChangelogFetcher,
     vuln_checker: VulnerabilityChecker,
+    replacement_db: ReplacementDatabase,
 }
 
 #[derive(Debug)]
@@ -100,6 +104,21 @@ impl Orchestrator {
 
         let vuln_checker = VulnerabilityChecker::new();
 
+        // Build the replacement database: start with built-ins, then layer any
+        // user-supplied rules file.
+        let mut replacement_db = ReplacementDatabase::load_builtin();
+        if config.replacement.enabled {
+            if let Some(rules_path) = &config.replacement.rules_file {
+                match ReplacementDatabase::load_from_toml(rules_path) {
+                    Ok(extra) => {
+                        replacement_db.rules.extend(extra.rules);
+                        info!("Loaded {} extra replacement rule(s) from {}", replacement_db.rules.len(), rules_path);
+                    }
+                    Err(e) => warn!("Failed to load replacement rules from {}: {}", rules_path, e),
+                }
+            }
+        }
+
         Ok(Self {
             config,
             gitlab,
@@ -113,6 +132,7 @@ impl Orchestrator {
             dashboard_enabled,
             changelog_fetcher,
             vuln_checker,
+            replacement_db,
         })
     }
 
@@ -199,6 +219,16 @@ impl Orchestrator {
         }
 
         info!("Extracted {} total dependencies", all_deps.len());
+
+        // Check for deprecated / renamed images before doing version checks.
+        if self.config.replacement.enabled {
+            let dep_list: Vec<Dependency> = all_deps.iter().map(|(d, _)| d.clone()).collect();
+            let replacement_actions = check_dependencies(&dep_list, &self.replacement_db);
+            if !replacement_actions.is_empty() {
+                self.handle_replacement_actions(source, label, &all_deps, &replacement_actions)
+                    .await;
+            }
+        }
 
         let candidates: Vec<UpdateCandidate> = stream::iter(all_deps.clone())
             .map(|(dep, content)| async move { self.check_for_update(dep, content).await })
@@ -976,6 +1006,154 @@ impl Orchestrator {
                     }
                 }
                 StaleMrStrategy::Ignore => {}
+            }
+        }
+    }
+
+    /// Handle replacement/deprecation actions found after scanning dependencies.
+    ///
+    /// * `Replace` actions  → create a separate migration MR (or log in local mode).
+    /// * `DeprecationWarning` → log a warning (and note in dry-run output).
+    async fn handle_replacement_actions(
+        &self,
+        source: &dyn FileSource,
+        label: &str,
+        all_deps: &[(Dependency, String)],
+        actions: &[ReplacementAction],
+    ) {
+        for action in actions {
+            match action {
+                ReplacementAction::DeprecationWarning { dep_name, file_path, reason } => {
+                    warn!(
+                        "[replacement] DEPRECATED: {} in {} — {}",
+                        dep_name,
+                        file_path,
+                        reason.as_deref().unwrap_or("no details"),
+                    );
+                }
+                ReplacementAction::Replace { dep_name, file_path, from_ref, to_ref, reason } => {
+                    if self.config.replacement.warn_only {
+                        warn!(
+                            "[replacement] {} in {} should be migrated: {} → {}",
+                            dep_name, file_path, from_ref, to_ref,
+                        );
+                        continue;
+                    }
+
+                    info!(
+                        "[replacement] Creating migration MR: {} → {} ({})",
+                        from_ref, to_ref, file_path,
+                    );
+
+                    // Find the file content for this dependency.
+                    let file_content = all_deps
+                        .iter()
+                        .find(|(d, _)| d.name == *dep_name && d.file_path == *file_path)
+                        .map(|(_, content)| content.as_str())
+                        .unwrap_or("");
+
+                    let branch_name = format!(
+                        "{}replace-{}-{}",
+                        self.config.merge_request.branch_prefix,
+                        dep_name.replace('/', "-"),
+                        // short deterministic suffix
+                        {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::hash::{Hash, Hasher};
+                            let mut h = DefaultHasher::new();
+                            from_ref.hash(&mut h);
+                            to_ref.hash(&mut h);
+                            format!("{:08x}", h.finish() as u32)
+                        }
+                    );
+
+                    // Skip if branch already exists.
+                    match source.branch_exists(&branch_name).await {
+                        Ok(true) => {
+                            info!("[replacement] Branch {} already exists, skipping", branch_name);
+                            continue;
+                        }
+                        Ok(false) => {}
+                        Err(e) => {
+                            warn!("[replacement] Could not check branch existence: {}", e);
+                            continue;
+                        }
+                    }
+
+                    let default_branch = match source.default_branch().await {
+                        Ok(b) => b,
+                        Err(e) => {
+                            warn!("[replacement] Could not get default branch: {}", e);
+                            continue;
+                        }
+                    };
+
+                    if let Err(e) = source.create_branch(&branch_name, &default_branch).await {
+                        warn!("[replacement] Failed to create branch {}: {}", branch_name, e);
+                        continue;
+                    }
+
+                    let file_update = updater::apply_replacement(
+                        file_content,
+                        file_path,
+                        from_ref,
+                        to_ref,
+                    );
+
+                    let commit_msg = format!(
+                        "chore(deps): migrate {} from {} to {}",
+                        dep_name, from_ref, to_ref,
+                    );
+
+                    if let Err(e) = source
+                        .commit_file(
+                            &branch_name,
+                            &file_update.file_path,
+                            &file_update.updated_content,
+                            &commit_msg,
+                        )
+                        .await
+                    {
+                        warn!("[replacement] Failed to commit migration for {}: {}", dep_name, e);
+                        continue;
+                    }
+
+                    let mr_body = render_replacement_mr_body(action);
+                    let mr_title = format!(
+                        "chore(deps): migrate {} to {}",
+                        dep_name, to_ref,
+                    );
+
+                    if let Some(gitlab) = &self.gitlab {
+                        let mut labels = self.config.merge_request.labels.clone();
+                        labels.push("replacement".to_string());
+
+                        match gitlab
+                            .create_mr(
+                                label,
+                                CreateMrParams {
+                                    source_branch: branch_name.clone(),
+                                    target_branch: default_branch.clone(),
+                                    title: mr_title,
+                                    description: mr_body,
+                                    labels,
+                                    assignee_ids: self.config.merge_request.assignees.clone(),
+                                    merge_when_pipeline_succeeds: None,
+                                },
+                            )
+                            .await
+                        {
+                            Ok(mr) => info!("[replacement] Created migration MR !{}: {}", mr.iid, mr.web_url),
+                            Err(e) => warn!("[replacement] Failed to create migration MR: {}", e),
+                        }
+                    } else {
+                        // Local mode: the branch and commit are sufficient.
+                        info!(
+                            "[replacement] Local mode: migration branch '{}' created for {} → {}",
+                            branch_name, from_ref, to_ref,
+                        );
+                    }
+                }
             }
         }
     }

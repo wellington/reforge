@@ -144,6 +144,27 @@ fn update_yaml_value(content: &str, old_version: &str, new_version: &str) -> Str
     result
 }
 
+/// Replace an entire image/chart reference (name + version) in `file_content`.
+///
+/// `old_ref` is the full old reference string (e.g. `docker.io/library/nginx:1.25`).
+/// `new_ref` is the complete replacement string (e.g. `docker.io/nginxinc/nginx-unprivileged:1.25`).
+///
+/// The function performs a literal string replacement of the first occurrence
+/// of `old_ref` with `new_ref`.
+pub fn apply_replacement(
+    file_content: &str,
+    file_path: &str,
+    old_ref: &str,
+    new_ref: &str,
+) -> FileUpdate {
+    let updated_content = file_content.replacen(old_ref, new_ref, 1);
+    FileUpdate {
+        file_path: file_path.to_string(),
+        original_content: file_content.to_string(),
+        updated_content,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,5 +223,36 @@ mod tests {
         let result = update_line_based(content, 0, "1.25.3", "1.26.0");
         assert!(result.ends_with('\n'));
         assert_eq!(result, "FROM nginx:1.26.0\n");
+    }
+
+    #[test]
+    fn test_apply_replacement_basic() {
+        let content = "FROM docker.io/library/nginx:1.25\nRUN echo hello\n";
+        let result = apply_replacement(
+            content,
+            "Dockerfile",
+            "docker.io/library/nginx:1.25",
+            "docker.io/nginxinc/nginx-unprivileged:1.25",
+        );
+        assert!(result.updated_content.contains("nginx-unprivileged"));
+        assert!(!result.updated_content.contains("docker.io/library/nginx:1.25"));
+    }
+
+    #[test]
+    fn test_apply_replacement_only_first_occurrence() {
+        let content = "image: old-img:1.0\nother: old-img:1.0\n";
+        let result = apply_replacement(content, "deploy.yaml", "old-img:1.0", "new-img:1.0");
+        // Only first occurrence replaced
+        let count = result.updated_content.matches("new-img:1.0").count();
+        assert_eq!(count, 1);
+        let remaining = result.updated_content.matches("old-img:1.0").count();
+        assert_eq!(remaining, 1);
+    }
+
+    #[test]
+    fn test_apply_replacement_no_match() {
+        let content = "FROM postgres:14\n";
+        let result = apply_replacement(content, "Dockerfile", "nginx:1.25", "nginx-unpriv:1.25");
+        assert_eq!(result.updated_content, content);
     }
 }

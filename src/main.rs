@@ -10,6 +10,7 @@ mod orchestrator;
 mod platform;
 mod rebase;
 mod registry;
+mod replacement;
 mod scheduling;
 mod updater;
 mod versioning;

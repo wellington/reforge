@@ -28,6 +28,8 @@ pub struct Config {
     pub vulnerability: VulnerabilityConfig,
     #[serde(default)]
     pub lockfile: LockfileConfig,
+    #[serde(default)]
+    pub replacement: ReplacementConfig,
     /// When set, operate against a local git checkout instead of the GitLab API.
     #[serde(default)]
     pub local_path: Option<PathBuf>,
@@ -57,6 +59,34 @@ impl Default for LockfileConfig {
         Self {
             enabled: default_lockfile_enabled(),
             helm_binary: None,
+        }
+    }
+}
+
+/// Configuration for replacement / deprecation awareness.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReplacementConfig {
+    /// Whether replacement checks are enabled (default: true).
+    #[serde(default = "default_replacement_enabled")]
+    pub enabled: bool,
+    /// Path to an optional TOML file with additional replacement rules.
+    #[serde(default)]
+    pub rules_file: Option<String>,
+    /// When true, only emit warnings; do not create replacement MRs.
+    #[serde(default)]
+    pub warn_only: bool,
+}
+
+fn default_replacement_enabled() -> bool {
+    true
+}
+
+impl Default for ReplacementConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_replacement_enabled(),
+            rules_file: None,
+            warn_only: false,
         }
     }
 }
@@ -530,6 +560,7 @@ impl Config {
             changelog: ChangelogConfig::default(),
             vulnerability: VulnerabilityConfig::default(),
             lockfile: LockfileConfig::default(),
+            replacement: ReplacementConfig::default(),
             local_path,
             regex_managers: vec![],
         })
