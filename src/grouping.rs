@@ -202,7 +202,6 @@ mod tests {
     use crate::config::{GroupBy, GroupingRule};
     use crate::manager::{Dependency, RegistrySource, UpdateContext};
     use crate::registry::VersionInfo;
-    use semver::Version;
 
     fn make_candidate(
         name: &str,

@@ -1,0 +1,7 @@
+target/
+.git/
+.cursor/
+.claude/
+todo/
+deploy/
+*.md

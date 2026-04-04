@@ -49,6 +49,7 @@ impl GitRepo {
     }
 
     /// Clone a remote repository to a local path.
+    #[allow(dead_code)]
     pub async fn clone(url: &str, dest: &Path) -> Result<Self> {
         let output = Command::new("git")
             .args(["clone", url, dest.to_str().unwrap_or(".")])
@@ -122,6 +123,7 @@ impl GitRepo {
     }
 
     /// Stage all modified tracked files and commit.
+    #[allow(dead_code)]
     pub async fn commit_all(&self, message: &str) -> Result<String> {
         self.run(&["add", "-u"]).await?;
         let out = self.run(&["commit", "-m", message]).await?;
@@ -129,17 +131,20 @@ impl GitRepo {
     }
 
     /// Push the current branch to origin.
+    #[allow(dead_code)]
     pub async fn push(&self, branch: &str) -> Result<()> {
         self.run(&["push", "origin", branch]).await?;
         Ok(())
     }
 
     /// Get the short status of the working tree.
+    #[allow(dead_code)]
     pub async fn status(&self) -> Result<String> {
         self.run(&["status", "--short"]).await
     }
 
     /// Get the commit log as `hash subject` lines.
+    #[allow(dead_code)]
     pub async fn log(&self, max_count: usize) -> Result<Vec<LogEntry>> {
         let n = max_count.to_string();
         let out = self
@@ -266,6 +271,7 @@ impl GitRepo {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LogEntry {
     pub hash: String,
     pub subject: String,

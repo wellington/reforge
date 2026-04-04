@@ -98,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let dashboard_enabled = cli.dashboard && !cli.no_dashboard;
-    let orchestrator = Orchestrator::new(config, cli.dry_run, dashboard_enabled)?;
+    let orchestrator = Orchestrator::new(config, cli.dry_run, cli.json, dashboard_enabled)?;
     orchestrator.run().await?;
 
     Ok(())

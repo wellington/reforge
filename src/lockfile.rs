@@ -9,6 +9,7 @@ use crate::manager::RegistrySource;
 
 /// Mirrors the structure of a Helm Chart.lock file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)]
 pub struct ChartLock {
     pub dependencies: Vec<ChartLockDependency>,
     pub digest: String,
@@ -16,12 +17,14 @@ pub struct ChartLock {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[allow(dead_code)]
 pub struct ChartLockDependency {
     pub name: String,
     pub repository: String,
     pub version: String,
 }
 
+#[allow(dead_code)]
 pub fn parse_chart_lock(contents: &str) -> Result<ChartLock> {
     serde_yaml::from_str(contents).map_err(|e| ReforgeError::Parse {
         file: "Chart.lock".to_string(),
@@ -33,6 +36,7 @@ pub fn parse_chart_lock(contents: &str) -> Result<ChartLock> {
 ///
 /// The `digests` map is keyed by dependency name. The overall lock file digest
 /// is computed from the sorted dependency digests to be deterministic.
+#[allow(dead_code)]
 pub fn generate_chart_lock(
     deps: &[ChartLockDependency],
     digests: &HashMap<String, String>,

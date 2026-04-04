@@ -37,6 +37,7 @@ impl RateLimiter {
 /// Priority ordering for update candidates when the rate limit is in effect.
 /// Lower discriminant = higher priority (created first).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[allow(dead_code)]
 pub enum PriorityOrder {
     Security = 0,
     Major = 1,
@@ -45,6 +46,7 @@ pub enum PriorityOrder {
     Unknown = 4,
 }
 
+#[allow(dead_code)]
 impl PriorityOrder {
     fn from_update_type(ut: Option<&UpdateType>) -> Self {
         match ut {
@@ -75,12 +77,14 @@ impl PriorityOrder {
 }
 
 /// Sorts `candidates` in-place by priority (highest priority first).
+#[allow(dead_code)]
 pub fn sort_candidates_by_priority(candidates: &mut Vec<UpdateCandidate>) {
     sort_candidates_by_priority_with_security(candidates, &HashSet::new());
 }
 
 /// Sorts `candidates` in-place, treating entries in `security_deps` as
 /// `PriorityOrder::Security` so they are scheduled before all other updates.
+#[allow(dead_code)]
 pub fn sort_candidates_by_priority_with_security(
     candidates: &mut Vec<UpdateCandidate>,
     security_deps: &HashSet<String>,

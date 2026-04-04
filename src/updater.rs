@@ -37,6 +37,7 @@ pub fn apply_updates<'a>(
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct FileUpdate {
     pub file_path: String,
     pub original_content: String,

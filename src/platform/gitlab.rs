@@ -13,6 +13,7 @@ pub struct GitLabClient {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct TreeEntry {
     pub id: String,
     pub name: String,
@@ -43,6 +44,7 @@ pub struct CreateMrParams {
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
+#[allow(dead_code)]
 pub struct UpdateMrParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -53,6 +55,7 @@ pub struct UpdateMrParams {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct MergeRequest {
     pub iid: u64,
     pub title: String,
@@ -64,6 +67,7 @@ pub struct MergeRequest {
 
 /// Extended MR view that includes conflict and staleness fields.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct MrDetail {
     pub iid: u64,
     pub title: String,
@@ -87,6 +91,7 @@ struct FileResponse {
     encoding: String,
 }
 
+#[allow(dead_code)]
 impl GitLabClient {
     pub fn new(url: &str, token: &str) -> Result<Self> {
         Self::with_options(url, token, false)
@@ -670,6 +675,7 @@ impl GitLabClient {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Issue {
     pub iid: u64,
     pub title: String,

@@ -40,6 +40,7 @@ pub struct Config {
 
 /// Configuration for lock-file maintenance.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct LockfileConfig {
     /// Whether to update Chart.lock alongside Chart.yaml (default: true).
     #[serde(default = "default_lockfile_enabled")]
@@ -108,6 +109,7 @@ pub struct RegexManagerConfig {
     pub registry_url: Option<String>,
     /// Versioning scheme override (currently informational).
     #[serde(default)]
+    #[allow(dead_code)]
     pub versioning: Option<String>,
 }
 
@@ -449,6 +451,7 @@ pub struct VulnerabilityConfig {
     pub security_labels: Vec<String>,
     /// When true, security updates bypass rate limits and are scheduled first.
     #[serde(default = "default_priority_boost")]
+    #[allow(dead_code)]
     pub priority_boost: bool,
 }
 

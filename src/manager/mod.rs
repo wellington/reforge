@@ -33,6 +33,7 @@ pub enum RegistrySource {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum UpdateContext {
     YamlKeyPath { keys: Vec<String> },
     DockerFrom {

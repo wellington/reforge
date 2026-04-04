@@ -43,6 +43,7 @@ pub struct Orchestrator {
     regex_manager_patterns: Vec<Vec<String>>,
     version_policy: VersionPolicy,
     dry_run: bool,
+    json_output: bool,
     dashboard_enabled: bool,
     changelog_fetcher: ChangelogFetcher,
     vuln_checker: VulnerabilityChecker,
@@ -57,7 +58,7 @@ pub struct UpdateCandidate {
 }
 
 impl Orchestrator {
-    pub fn new(config: Config, dry_run: bool, dashboard_enabled: bool) -> Result<Self> {
+    pub fn new(config: Config, dry_run: bool, json_output: bool, dashboard_enabled: bool) -> Result<Self> {
         // Only construct a GitLab client when not in local mode.
         let gitlab = if config.local_path.is_none() {
             let token = config.gitlab.token.as_deref().unwrap_or("");
@@ -129,6 +130,7 @@ impl Orchestrator {
             regex_manager_patterns,
             version_policy,
             dry_run,
+            json_output,
             dashboard_enabled,
             changelog_fetcher,
             vuln_checker,
@@ -246,10 +248,18 @@ impl Orchestrator {
             .collect()
             .await;
 
-        info!("Found {} available updates", candidates.len());
+        info!("Found {} available updates (before dedup)", candidates.len());
+
+        let candidates = Self::deduplicate_candidates(candidates);
+
+        info!("Found {} available updates (after dedup)", candidates.len());
 
         if self.dry_run {
-            self.print_dry_run_report(&candidates);
+            if self.json_output {
+                self.print_json_report(&candidates);
+            } else {
+                self.print_dry_run_report(&candidates);
+            }
             return Ok(());
         }
 
@@ -271,9 +281,17 @@ impl Orchestrator {
             .collect();
 
         // In local mode we commit directly; in GitLab mode we create MRs.
-        if self.config.local_path.is_some() {
+        if let Some(local_path) = &self.config.local_path {
             self.apply_local_updates(source, &default_branch, &groups)
                 .await?;
+
+            // Return to the default branch so the working tree is clean.
+            let repo = crate::platform::git::GitRepo::new(local_path.clone());
+            if let Err(e) = repo.checkout(&default_branch).await {
+                warn!("Failed to checkout default branch '{}': {}", default_branch, e);
+            } else {
+                info!("Returned to default branch '{}'", default_branch);
+            }
 
             if self.dashboard_enabled && self.config.dashboard.enabled {
                 let statuses = dashboard::build_statuses(&all_deps, &flat_candidates, &[], &self.config.merge_request.branch_prefix);
@@ -283,6 +301,11 @@ impl Orchestrator {
                     error!("Failed to write local dashboard: {}", e);
                 } else {
                     info!("Dashboard written to {}", path);
+                    // Commit the dashboard to the default branch.
+                    match repo.add_and_commit(path, "chore: update dependency dashboard").await {
+                        Ok(_) => info!("Dashboard committed to '{}'", default_branch),
+                        Err(e) => warn!("Failed to commit dashboard: {}", e),
+                    }
                 }
             }
         } else {
@@ -1031,7 +1054,7 @@ impl Orchestrator {
                         reason.as_deref().unwrap_or("no details"),
                     );
                 }
-                ReplacementAction::Replace { dep_name, file_path, from_ref, to_ref, reason } => {
+                ReplacementAction::Replace { dep_name, file_path, from_ref, to_ref, reason: _ } => {
                     if self.config.replacement.warn_only {
                         warn!(
                             "[replacement] {} in {} should be migrated: {} → {}",
@@ -1254,6 +1277,64 @@ impl Orchestrator {
         }
     }
 
+    /// Deduplicate update candidates when the same dependency+version pair is
+    /// detected from multiple managers/files. Keeps only the first occurrence
+    /// per (name, new_version) key and logs duplicates that are merged.
+    fn deduplicate_candidates(candidates: Vec<UpdateCandidate>) -> Vec<UpdateCandidate> {
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut deduped: Vec<UpdateCandidate> = Vec::with_capacity(candidates.len());
+
+        for candidate in candidates {
+            let key = (
+                candidate.dependency.name.clone(),
+                candidate.new_version.original_tag.clone(),
+            );
+            if seen.contains(&key) {
+                debug!(
+                    "Dedup: skipping duplicate candidate {} {} (from {})",
+                    key.0, key.1, candidate.dependency.file_path,
+                );
+                continue;
+            }
+            seen.insert(key);
+            deduped.push(candidate);
+        }
+
+        deduped
+    }
+
+    fn print_json_report(&self, candidates: &[UpdateCandidate]) {
+        let entries: Vec<serde_json::Value> = candidates
+            .iter()
+            .map(|c| {
+                let manager = match &c.dependency.registry {
+                    RegistrySource::DockerRegistry { .. } => "docker",
+                    RegistrySource::HelmRepository { .. } => "helm",
+                    RegistrySource::OciHelmRegistry { .. } => "helm",
+                };
+                let registry = match &c.dependency.registry {
+                    RegistrySource::DockerRegistry { registry, .. } => {
+                        registry.as_deref().unwrap_or("registry-1.docker.io").to_string()
+                    }
+                    RegistrySource::HelmRepository { repo_url, .. } => repo_url.clone(),
+                    RegistrySource::OciHelmRegistry { registry, .. } => {
+                        registry.as_deref().unwrap_or("").to_string()
+                    }
+                };
+                serde_json::json!({
+                    "name": c.dependency.name,
+                    "manager": manager,
+                    "file_path": c.dependency.file_path,
+                    "current_version": c.dependency.current_version,
+                    "new_version": c.new_version.original_tag,
+                    "registry": registry,
+                })
+            })
+            .collect();
+
+        println!("{}", serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".to_string()));
+    }
+
     fn print_dry_run_report(&self, candidates: &[UpdateCandidate]) {
         if candidates.is_empty() {
             println!("\nNo updates available.");
@@ -1295,5 +1376,136 @@ fn chart_lock_path(chart_yaml_path: &str) -> String {
         format!("{}/Chart.lock", &chart_yaml_path[..dir])
     } else {
         "Chart.lock".to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grouping::Group;
+    use crate::manager::{Dependency, RegistrySource, UpdateContext};
+    use crate::registry::VersionInfo;
+    use crate::vulnerability::VulnerabilityInfo;
+
+    fn test_orchestrator() -> Orchestrator {
+        let config = Config::from_cli(crate::config::CliOverrides {
+            local_path: Some(std::path::PathBuf::from("/tmp/test")),
+            ..Default::default()
+        })
+        .unwrap();
+        Orchestrator::new(config, true, false, false).unwrap()
+    }
+
+    fn make_candidate(name: &str, current: &str, new_ver: &str, file_path: &str) -> UpdateCandidate {
+        UpdateCandidate {
+            dependency: Dependency {
+                name: name.to_string(),
+                current_version: current.to_string(),
+                registry: RegistrySource::DockerRegistry {
+                    image: name.to_string(),
+                    registry: None,
+                },
+                file_path: file_path.to_string(),
+                update_context: UpdateContext::DockerFrom {
+                    line_number: 0,
+                    full_reference: format!("{}:{}", name, current),
+                },
+            },
+            new_version: VersionInfo {
+                version: semver::Version::parse(new_ver.trim_start_matches('v')).unwrap(),
+                original_tag: new_ver.to_string(),
+            },
+            file_content: String::new(),
+        }
+    }
+
+    #[test]
+    fn mr_body_contains_update_table() {
+        let orch = test_orchestrator();
+        let group = Group {
+            name: "docker-nginx".to_string(),
+            candidates: vec![make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile")],
+        };
+
+        let (title, body) = orch.build_group_mr_content(&group, None, &[]);
+
+        assert!(title.contains("nginx"));
+        assert!(title.contains("1.26.0"));
+        assert!(body.contains("| Package | Manager | File | Current | New |"));
+        assert!(body.contains("| nginx | docker | Dockerfile | 1.25.0 | 1.26.0 |"));
+        assert!(body.contains("*This MR was automatically created by reforge.*"));
+    }
+
+    #[test]
+    fn mr_body_includes_changelog_section() {
+        let orch = test_orchestrator();
+        let group = Group {
+            name: "docker-nginx".to_string(),
+            candidates: vec![make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile")],
+        };
+
+        let changelog = "## 1.26.0\n- Fixed CVE-2024-1234\n- Performance improvements";
+        let (_title, body) = orch.build_group_mr_content(&group, Some(changelog), &[]);
+
+        assert!(body.contains("Release Notes"));
+        assert!(body.contains("Fixed CVE-2024-1234"));
+    }
+
+    #[test]
+    fn mr_body_includes_vulnerability_section() {
+        let orch = test_orchestrator();
+        let group = Group {
+            name: "docker-nginx".to_string(),
+            candidates: vec![make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile")],
+        };
+
+        let vulns = vec![VulnerabilityInfo {
+            id: "CVE-2024-5678".to_string(),
+            summary: "Remote code execution in nginx".to_string(),
+            severity: Some("CRITICAL".to_string()),
+            fixed_in: Some("1.26.0".to_string()),
+            url: "https://osv.dev/vulnerability/CVE-2024-5678".to_string(),
+        }];
+
+        let (_title, body) = orch.build_group_mr_content(&group, None, &vulns);
+
+        assert!(body.contains("Security Advisories"));
+        assert!(body.contains("CVE-2024-5678"));
+        assert!(body.contains("CRITICAL"));
+        assert!(body.contains("Remote code execution in nginx"));
+    }
+
+    #[test]
+    fn mr_body_grouped_update_title() {
+        let orch = test_orchestrator();
+        let group = Group {
+            name: "all-docker".to_string(),
+            candidates: vec![
+                make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile"),
+                make_candidate("alpine", "3.18.0", "3.19.0", "Dockerfile"),
+            ],
+        };
+
+        let (title, body) = orch.build_group_mr_content(&group, None, &[]);
+
+        assert!(title.contains("grouped update"));
+        assert!(title.contains("all-docker"));
+        assert!(body.contains("Dependency Updates"));
+        assert!(body.contains("nginx"));
+        assert!(body.contains("alpine"));
+    }
+
+    #[test]
+    fn dedup_removes_duplicate_candidates() {
+        let candidates = vec![
+            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile"),
+            make_candidate("nginx", "1.25.0", "1.26.0", "apps/web/login.yaml"),
+            make_candidate("alpine", "3.18.0", "3.19.0", "Dockerfile"),
+        ];
+
+        let deduped = Orchestrator::deduplicate_candidates(candidates);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].dependency.name, "nginx");
+        assert_eq!(deduped[1].dependency.name, "alpine");
     }
 }

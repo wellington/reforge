@@ -119,13 +119,7 @@ mod tests {
     fn test_skips_prereleases() {
         let policy = VersionPolicy::new(PinStrategy::SemverMinor);
         let current = Version::parse("1.25.0").unwrap();
-        let available = vec![
-            vi("1.26.0-beta.1"),
-            vi("1.25.1"),
-        ];
 
-        // 1.26.0-beta.1 won't parse cleanly with our vi() helper because
-        // semver::Version::parse handles it, but it has a non-empty pre field.
         let available_with_pre = vec![
             VersionInfo {
                 version: Version::parse("1.26.0-beta.1").unwrap(),

@@ -20,12 +20,14 @@ pub enum StaleMrStrategy {
 
 /// An open MR that may be stale.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct StaleMr {
     pub mr: MergeRequest,
     pub has_conflicts: bool,
     pub is_behind: bool,
 }
 
+#[allow(dead_code)]
 impl StaleMr {
     /// Returns true if any remediation is warranted.
     pub fn needs_action(&self) -> bool {
@@ -99,6 +101,7 @@ pub async fn rebase_mr(gitlab: &GitLabClient, project: &str, mr_iid: u64) -> Res
 /// Recreate the source branch from `default_branch`, re-apply the update
 /// commit, and preserve the existing MR (which follows the renamed branch
 /// automatically because GitLab tracks source branch name, not SHA).
+#[allow(dead_code)]
 pub async fn recreate_mr_branch(
     gitlab: &GitLabClient,
     project: &str,
