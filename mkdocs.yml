@@ -1,0 +1,14 @@
+site_name: 'Reforge'
+
+nav:
+  - 'Overview': index.md
+  - 'Getting Started': getting-started.md
+  - 'Configuration Reference': configuration.md
+  - 'Managers': managers.md
+  - 'Merge Requests': merge-requests.md
+  - 'Advanced Features': advanced.md
+  - 'GitLab CI': gitlab-ci.md
+  - 'Local Mode': local-mode.md
+
+plugins:
+  - techdocs-core
