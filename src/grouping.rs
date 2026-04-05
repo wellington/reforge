@@ -147,53 +147,11 @@ fn sub_group_key(rule: &GroupingRule, candidate: &UpdateCandidate) -> String {
 }
 
 fn manager_name(registry: &RegistrySource) -> &'static str {
-    match registry {
-        RegistrySource::DockerRegistry { .. } => "docker",
-        RegistrySource::HelmRepository { .. } => "helm",
-        RegistrySource::OciHelmRegistry { .. } => "helm",
-    }
+    crate::util::manager_name(registry)
 }
 
-/// Simple glob matcher reused from automerge (supports `*` and `**`).
 fn glob_match(pattern: &str, text: &str) -> bool {
-    if pattern == "*" || pattern == "**" {
-        return true;
-    }
-    let pattern: Vec<char> = pattern.chars().collect();
-    let text: Vec<char> = text.chars().collect();
-    glob_match_inner(&pattern, &text)
-}
-
-fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
-    match (pattern.first(), text.first()) {
-        (None, None) => true,
-        (None, _) => false,
-        (Some('*'), _) => {
-            if pattern.get(1) == Some(&'*') {
-                let rest = &pattern[2..];
-                let rest = if rest.first() == Some(&'/') { &rest[1..] } else { rest };
-                for i in 0..=text.len() {
-                    if glob_match_inner(rest, &text[i..]) {
-                        return true;
-                    }
-                }
-                false
-            } else {
-                let rest = &pattern[1..];
-                for i in 0..=text.len() {
-                    if text[..i].iter().any(|&c| c == '/') {
-                        break;
-                    }
-                    if glob_match_inner(rest, &text[i..]) {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-        (Some(&p), Some(&t)) if p == t => glob_match_inner(&pattern[1..], &text[1..]),
-        _ => false,
-    }
+    crate::util::glob_match(pattern, text)
 }
 
 #[cfg(test)]

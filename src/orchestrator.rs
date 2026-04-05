@@ -22,31 +22,50 @@ use crate::replacement::{
 };
 use crate::scheduling::{is_within_schedule_window, RateLimiter};
 use crate::updater;
-use crate::versioning::{PinStrategy, VersionPolicy};
+use crate::versioning::VersionPolicy;
 use crate::vulnerability::{
     ecosystem_for_manager, render_vulnerability_section, VulnerabilityChecker, VulnerabilityInfo,
 };
 
 const CONCURRENCY_LIMIT: usize = 5;
 
+/// Registry clients and HTTP client bundled together.
+struct RegistryLookup {
+    docker: DockerRegistryClient,
+    helm: HelmRegistryClient,
+    http: reqwest::Client,
+}
+
+/// File-pattern matching state: built-in and regex managers with their patterns.
+struct Scanner {
+    managers: Vec<Box<dyn PackageManager>>,
+    /// Glob patterns for regex managers, parallel to the regex-manager entries
+    /// appended at the end of `managers`.
+    regex_manager_patterns: Vec<Vec<String>>,
+}
+
+/// Runtime mode flags.
+struct RunOptions {
+    dry_run: bool,
+    json_output: bool,
+    dashboard_enabled: bool,
+}
+
+/// Per-MR enrichment: changelog notes and vulnerability data.
+struct MrEnricher {
+    changelog: ChangelogFetcher,
+    vuln: VulnerabilityChecker,
+}
+
 pub struct Orchestrator {
     config: Config,
     /// Only used in GitLab mode for MR creation.
     gitlab: Option<GitLabClient>,
-    docker_registry: DockerRegistryClient,
-    helm_registry: HelmRegistryClient,
-    http_client: reqwest::Client,
-    managers: Vec<Box<dyn PackageManager>>,
-    /// Dynamic file-pattern sets for regex managers (parallel to the regex manager
-    /// entries appended to `managers`). Each entry is the list of glob patterns for
-    /// one regex manager.
-    regex_manager_patterns: Vec<Vec<String>>,
+    registry: RegistryLookup,
+    scanner: Scanner,
     version_policy: VersionPolicy,
-    dry_run: bool,
-    json_output: bool,
-    dashboard_enabled: bool,
-    changelog_fetcher: ChangelogFetcher,
-    vuln_checker: VulnerabilityChecker,
+    options: RunOptions,
+    enricher: MrEnricher,
     replacement_db: ReplacementDatabase,
 }
 
@@ -67,13 +86,36 @@ impl Orchestrator {
             None
         };
 
-        let docker_registry = DockerRegistryClient::new(config.registries.clone());
-        let helm_registry = HelmRegistryClient::new(config.registries.clone());
-        let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("Failed to build HTTP client");
+        let registry = RegistryLookup {
+            docker: DockerRegistryClient::new(config.registries.clone())?,
+            helm: HelmRegistryClient::new(config.registries.clone())?,
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()?,
+        };
 
+        let scanner = Self::build_scanner(&config);
+        let version_policy = VersionPolicy::new(config.versioning.pin_strategy.clone());
+        let options = RunOptions { dry_run, json_output, dashboard_enabled };
+        let enricher = MrEnricher {
+            changelog: ChangelogFetcher::new(config.changelog.github_token.clone()),
+            vuln: VulnerabilityChecker::new(),
+        };
+        let replacement_db = Self::build_replacement_db(&config);
+
+        Ok(Self {
+            config,
+            gitlab,
+            registry,
+            scanner,
+            version_policy,
+            options,
+            enricher,
+            replacement_db,
+        })
+    }
+
+    fn build_scanner(config: &Config) -> Scanner {
         let mut managers: Vec<Box<dyn PackageManager>> = Vec::new();
         for mgr_name in &config.managers.enabled {
             match mgr_name.as_str() {
@@ -91,51 +133,57 @@ impl Orchestrator {
                     regex_manager_patterns.push(rm_config.file_patterns.clone());
                     managers.push(Box::new(mgr));
                 }
-                Err(e) => {
-                    warn!("Skipping regex manager '{}': {}", rm_config.name, e);
-                }
+                Err(e) => warn!("Skipping regex manager '{}': {}", rm_config.name, e),
             }
         }
 
-        let strategy = PinStrategy::from_str(&config.versioning.pin_strategy);
-        let version_policy = VersionPolicy::new(strategy);
+        Scanner { managers, regex_manager_patterns }
+    }
 
-        let changelog_fetcher =
-            ChangelogFetcher::new(config.changelog.github_token.clone());
-
-        let vuln_checker = VulnerabilityChecker::new();
-
-        // Build the replacement database: start with built-ins, then layer any
-        // user-supplied rules file.
-        let mut replacement_db = ReplacementDatabase::load_builtin();
+    fn build_replacement_db(config: &Config) -> ReplacementDatabase {
+        let mut db = ReplacementDatabase::load_builtin();
         if config.replacement.enabled {
             if let Some(rules_path) = &config.replacement.rules_file {
                 match ReplacementDatabase::load_from_toml(rules_path) {
                     Ok(extra) => {
-                        replacement_db.rules.extend(extra.rules);
-                        info!("Loaded {} extra replacement rule(s) from {}", replacement_db.rules.len(), rules_path);
+                        let count = extra.rules.len();
+                        db.rules.extend(extra.rules);
+                        info!("Loaded {} extra replacement rule(s) from {}", count, rules_path);
                     }
                     Err(e) => warn!("Failed to load replacement rules from {}: {}", rules_path, e),
                 }
             }
         }
+        db
+    }
 
-        Ok(Self {
-            config,
-            gitlab,
-            docker_registry,
-            helm_registry,
-            http_client,
-            managers,
-            regex_manager_patterns,
-            version_policy,
-            dry_run,
-            json_output,
-            dashboard_enabled,
-            changelog_fetcher,
-            vuln_checker,
-            replacement_db,
-        })
+    /// Fetch and extract dependencies from all matching files in `file_paths`.
+    async fn extract_all_deps(
+        &self,
+        source: &dyn FileSource,
+        file_paths: &[String],
+        default_branch: &str,
+    ) -> Vec<(Dependency, String)> {
+        let mut all_deps: Vec<(Dependency, String)> = Vec::new();
+        for file_path in file_paths {
+            debug!("Fetching file: {}", file_path);
+            let contents = match source.get_file(file_path, default_branch).await {
+                Ok(c) => c,
+                Err(e) => { warn!("Failed to fetch {}: {}", file_path, e); continue; }
+            };
+            for manager in &self.scanner.managers {
+                if self.file_matches_manager(file_path, manager.as_ref()) {
+                    match manager.extract_dependencies(file_path, &contents) {
+                        Ok(deps) => {
+                            debug!("Found {} dependencies in {} ({})", deps.len(), file_path, manager.name());
+                            for dep in deps { all_deps.push((dep, contents.clone())); }
+                        }
+                        Err(e) => warn!("Failed to extract dependencies from {} ({}): {}", file_path, manager.name(), e),
+                    }
+                }
+            }
+        }
+        all_deps
     }
 
     pub async fn run(&self) -> Result<()> {
@@ -151,7 +199,10 @@ impl Orchestrator {
             return Ok(());
         }
 
-        let gitlab = self.gitlab.as_ref().expect("GitLab client required in API mode");
+        let gitlab = self
+            .gitlab
+            .as_ref()
+            .ok_or_else(|| crate::error::ReforgeError::Config("GitLab client required in API mode".into()))?;
 
         for project in &self.config.scan.projects {
             info!("Scanning project: {}", project);
@@ -162,7 +213,6 @@ impl Orchestrator {
             if let Err(e) = self.process_with_source(&source, project).await {
                 error!("Error processing project {}: {}", project, e);
             }
-            let _ = gitlab; // ensure borrow extends to here
         }
 
         Ok(())
@@ -178,48 +228,9 @@ impl Orchestrator {
             .filter(|e| self.matches_any_pattern(&e.path))
             .map(|e| e.path)
             .collect();
-
         info!("Found {} matching files", file_paths.len());
 
-        let mut all_deps: Vec<(Dependency, String)> = Vec::new();
-
-        for file_path in &file_paths {
-            debug!("Fetching file: {}", file_path);
-            let contents = match source.get_file(file_path, &default_branch).await {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!("Failed to fetch {}: {}", file_path, e);
-                    continue;
-                }
-            };
-
-            for manager in &self.managers {
-                if self.file_matches_manager(file_path, manager.as_ref()) {
-                    match manager.extract_dependencies(file_path, &contents) {
-                        Ok(deps) => {
-                            debug!(
-                                "Found {} dependencies in {} ({})",
-                                deps.len(),
-                                file_path,
-                                manager.name()
-                            );
-                            for dep in deps {
-                                all_deps.push((dep, contents.clone()));
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                "Failed to extract dependencies from {} ({}): {}",
-                                file_path,
-                                manager.name(),
-                                e
-                            );
-                        }
-                    }
-                }
-            }
-        }
-
+        let all_deps = self.extract_all_deps(source, &file_paths, &default_branch).await;
         info!("Extracted {} total dependencies", all_deps.len());
 
         // Check for deprecated / renamed images before doing version checks.
@@ -232,7 +243,44 @@ impl Orchestrator {
             }
         }
 
-        let candidates: Vec<UpdateCandidate> = stream::iter(all_deps.clone())
+        let candidates = self.check_updates_concurrent(all_deps.clone()).await;
+        info!("Found {} available updates (before dedup)", candidates.len());
+        let candidates = Self::deduplicate_candidates(candidates);
+        info!("Found {} available updates (after dedup)", candidates.len());
+
+        if self.options.dry_run {
+            if self.options.json_output {
+                self.print_json_report(&candidates);
+            } else {
+                self.print_dry_run_report(&candidates);
+            }
+            return Ok(());
+        }
+
+        let groups = group_candidates(
+            candidates,
+            &self.config.merge_request.grouping_rules,
+            &self.config.merge_request.grouping,
+        );
+        let flat_candidates: Vec<UpdateCandidate> = groups
+            .iter()
+            .flat_map(|g| g.candidates.iter().map(|c| UpdateCandidate {
+                dependency: c.dependency.clone(),
+                new_version: c.new_version.clone(),
+                file_content: c.file_content.clone(),
+            }))
+            .collect();
+
+        self.dispatch_updates(source, label, &default_branch, &groups, &all_deps, &flat_candidates)
+            .await
+    }
+
+    /// Run all dep-version checks concurrently and return only the candidates that have updates.
+    async fn check_updates_concurrent(
+        &self,
+        all_deps: Vec<(Dependency, String)>,
+    ) -> Vec<UpdateCandidate> {
+        stream::iter(all_deps)
             .map(|(dep, content)| async move { self.check_for_update(dep, content).await })
             .buffer_unordered(CONCURRENCY_LIMIT)
             .filter_map(|result| async move {
@@ -246,99 +294,84 @@ impl Orchestrator {
                 }
             })
             .collect()
-            .await;
+            .await
+    }
 
-        info!("Found {} available updates (before dedup)", candidates.len());
-
-        let candidates = Self::deduplicate_candidates(candidates);
-
-        info!("Found {} available updates (after dedup)", candidates.len());
-
-        if self.dry_run {
-            if self.json_output {
-                self.print_json_report(&candidates);
-            } else {
-                self.print_dry_run_report(&candidates);
-            }
-            return Ok(());
-        }
-
-        // Partition candidates into groups according to the configured rules.
-        let groups = group_candidates(
-            candidates,
-            &self.config.merge_request.grouping_rules,
-            &self.config.merge_request.grouping,
-        );
-
-        // Reconstruct a flat list for dashboard/dry-run reporting.
-        let flat_candidates: Vec<UpdateCandidate> = groups
-            .iter()
-            .flat_map(|g| g.candidates.iter().map(|c| UpdateCandidate {
-                dependency: c.dependency.clone(),
-                new_version: c.new_version.clone(),
-                file_content: c.file_content.clone(),
-            }))
-            .collect();
-
-        // In local mode we commit directly; in GitLab mode we create MRs.
+    /// Apply update groups either locally (git commits) or via GitLab MRs, then update the dashboard.
+    async fn dispatch_updates(
+        &self,
+        source: &dyn FileSource,
+        label: &str,
+        default_branch: &str,
+        groups: &[Group],
+        all_deps: &[(Dependency, String)],
+        flat_candidates: &[UpdateCandidate],
+    ) -> Result<()> {
         if let Some(local_path) = &self.config.local_path {
-            self.apply_local_updates(source, &default_branch, &groups)
-                .await?;
-
-            // Return to the default branch so the working tree is clean.
+            self.apply_local_updates(source, default_branch, groups).await?;
             let repo = crate::platform::git::GitRepo::new(local_path.clone());
-            if let Err(e) = repo.checkout(&default_branch).await {
+            if let Err(e) = repo.checkout(default_branch).await {
                 warn!("Failed to checkout default branch '{}': {}", default_branch, e);
             } else {
                 info!("Returned to default branch '{}'", default_branch);
             }
-
-            if self.dashboard_enabled && self.config.dashboard.enabled {
-                let statuses = dashboard::build_statuses(&all_deps, &flat_candidates, &[], &self.config.merge_request.branch_prefix);
-                let body = dashboard::render_dashboard(&statuses, label);
-                let path = &self.config.dashboard.local_path;
-                if let Err(e) = dashboard::write_local_dashboard(&body, path) {
-                    error!("Failed to write local dashboard: {}", e);
-                } else {
-                    info!("Dashboard written to {}", path);
-                    // Commit the dashboard to the default branch.
-                    match repo.add_and_commit(path, "chore: update dependency dashboard").await {
-                        Ok(_) => info!("Dashboard committed to '{}'", default_branch),
-                        Err(e) => warn!("Failed to commit dashboard: {}", e),
-                    }
-                }
-            }
+            self.write_local_dashboard(label, all_deps, flat_candidates, default_branch, &repo)
+                .await;
         } else {
-            self.create_gitlab_mrs(source, label, &default_branch, &groups)
-                .await?;
+            self.create_gitlab_mrs(source, label, default_branch, groups).await?;
+            self.write_gitlab_dashboard(label, all_deps, flat_candidates).await;
+        }
+        Ok(())
+    }
 
-            if self.dashboard_enabled && self.config.dashboard.enabled {
-                if let Some(gitlab) = &self.gitlab {
-                    let open_mrs = gitlab
-                        .list_open_mrs(label, Some(&self.config.merge_request.branch_prefix))
-                        .await
-                        .unwrap_or_else(|e| {
-                            warn!("Failed to fetch open MRs for dashboard: {}", e);
-                            vec![]
-                        });
-                    let statuses = dashboard::build_statuses(&all_deps, &flat_candidates, &open_mrs, &self.config.merge_request.branch_prefix);
-                    let body = dashboard::render_dashboard(&statuses, label);
-                    match dashboard::upsert_gitlab_dashboard(
-                        gitlab,
-                        label,
-                        &body,
-                        &self.config.dashboard.labels,
-                    )
-                    .await
-                    {
-                        Ok(issue) => info!("Dashboard issue updated: {}", issue.web_url),
-                        Err(e) => error!("Failed to upsert dashboard issue: {}", e),
-                    }
-                }
+    async fn write_local_dashboard(
+        &self,
+        label: &str,
+        all_deps: &[(Dependency, String)],
+        flat_candidates: &[UpdateCandidate],
+        default_branch: &str,
+        repo: &crate::platform::git::GitRepo,
+    ) {
+        if !self.options.dashboard_enabled || !self.config.dashboard.enabled {
+            return;
+        }
+        let statuses = dashboard::build_statuses(all_deps, flat_candidates, &[], &self.config.merge_request.branch_prefix);
+        let body = dashboard::render_dashboard(&statuses, label);
+        let path = &self.config.dashboard.local_path;
+        if let Err(e) = dashboard::write_local_dashboard(&body, path) {
+            error!("Failed to write local dashboard: {}", e);
+        } else {
+            info!("Dashboard written to {}", path);
+            match repo.add_and_commit(path, "chore: update dependency dashboard").await {
+                Ok(_) => info!("Dashboard committed to '{}'", default_branch),
+                Err(e) => warn!("Failed to commit dashboard: {}", e),
             }
         }
+    }
 
-        Ok(())
+    async fn write_gitlab_dashboard(
+        &self,
+        label: &str,
+        all_deps: &[(Dependency, String)],
+        flat_candidates: &[UpdateCandidate],
+    ) {
+        if !self.options.dashboard_enabled || !self.config.dashboard.enabled {
+            return;
+        }
+        let Some(gitlab) = &self.gitlab else { return };
+        let open_mrs = gitlab
+            .list_open_mrs(label, Some(&self.config.merge_request.branch_prefix))
+            .await
+            .unwrap_or_else(|e| {
+                warn!("Failed to fetch open MRs for dashboard: {}", e);
+                vec![]
+            });
+        let statuses = dashboard::build_statuses(all_deps, flat_candidates, &open_mrs, &self.config.merge_request.branch_prefix);
+        let body = dashboard::render_dashboard(&statuses, label);
+        match dashboard::upsert_gitlab_dashboard(gitlab, label, &body, &self.config.dashboard.labels).await {
+            Ok(issue) => info!("Dashboard issue updated: {}", issue.web_url),
+            Err(e) => error!("Failed to upsert dashboard issue: {}", e),
+        }
     }
 
     async fn apply_local_updates(
@@ -347,8 +380,6 @@ impl Orchestrator {
         default_branch: &str,
         groups: &[Group],
     ) -> Result<()> {
-        // Before processing new updates, rebase any existing reforge branches
-        // in local mode (if the strategy calls for it).
         if self.config.merge_request.rebase_enabled {
             if let Some(local_path) = &self.config.local_path {
                 use crate::platform::git::GitRepo;
@@ -361,150 +392,92 @@ impl Orchestrator {
             if group.candidates.is_empty() {
                 continue;
             }
-
             let is_grouped = group.candidates.len() > 1;
             let branch_name = if is_grouped {
                 self.branch_name_for_group(&group.name)
             } else {
-                self.branch_name_for(
-                    &group.candidates[0].dependency,
-                    &group.candidates[0].new_version,
-                )
+                self.branch_name_for(&group.candidates[0].dependency, &group.candidates[0].new_version)
             };
-
             let already_exists = source.branch_exists(&branch_name).await?;
             if already_exists {
                 info!("Branch already exists (branch: {}), skipping", branch_name);
                 continue;
             }
-
             if let Err(e) = source.create_branch(&branch_name, default_branch).await {
                 error!("Failed to create branch {}: {}", branch_name, e);
                 continue;
             }
-
-            // Group candidates by file so we can apply all updates for a given
-            // file in a single commit.
-            let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
-            for candidate in &group.candidates {
-                by_file
-                    .entry(candidate.dependency.file_path.clone())
-                    .or_default()
-                    .push(candidate);
-            }
-
-            let mut committed_names: Vec<String> = Vec::new();
-
-            for (file_path, file_candidates) in &by_file {
-                let original_content = &file_candidates[0].file_content;
-                let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
-                    .iter()
-                    .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
-                    .collect();
-
-                let (file_update, errors) =
-                    updater::apply_updates(updates, original_content, file_path);
-
-                for e in &errors {
-                    error!("Failed to apply update in group '{}': {}", group.name, e);
-                }
-
-                let commit_msg = if file_candidates.len() == 1 {
-                    let c = file_candidates[0];
-                    format!(
-                        "chore(deps): update {} from {} to {}",
-                        c.dependency.name,
-                        c.dependency.current_version,
-                        c.new_version.original_tag,
-                    )
-                } else {
-                    format!("chore(deps): grouped update for '{}'", group.name)
-                };
-
-                match source
-                    .commit_file(
-                        &branch_name,
-                        &file_update.file_path,
-                        &file_update.updated_content,
-                        &commit_msg,
-                    )
-                    .await
-                {
-                    Ok(commit) => {
-                        info!(
-                            "Committed {} update(s) on branch {} ({})",
-                            file_candidates.len(),
-                            branch_name,
-                            commit
-                        );
-                        for c in file_candidates {
-                            committed_names.push(c.dependency.name.clone());
-                        }
-                    }
-                    Err(e) => error!("Failed to commit to {}: {}", branch_name, e),
-                }
-
-                // If this is a Chart.yaml file and lockfile maintenance is enabled,
-                // update the sibling Chart.lock when one exists.
-                if self.config.lockfile.enabled
-                    && file_path.ends_with("Chart.yaml")
-                {
-                    let lock_path = chart_lock_path(file_path);
-                    if let Ok(lock_content) = source.get_file(&lock_path, &branch_name).await {
-                        let mut updated_lock = lock_content.clone();
-                        for c in file_candidates {
-                            let dep_name = &c.dependency.name;
-                            let new_ver = c.new_version.original_tag.as_str();
-                            let new_digest = self
-                                .fetch_dep_digest(&c.dependency.registry, new_ver)
-                                .await;
-                            updated_lock = lockfile::update_chart_lock(
-                                &updated_lock,
-                                dep_name,
-                                new_ver,
-                                &new_digest,
-                            );
-                        }
-                        let lock_commit_msg = format!(
-                            "chore(deps): update Chart.lock for {}",
-                            file_candidates
-                                .iter()
-                                .map(|c| c.dependency.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        );
-                        match source
-                            .commit_file(&branch_name, &lock_path, &updated_lock, &lock_commit_msg)
-                            .await
-                        {
-                            Ok(_) => info!("Updated Chart.lock at {}", lock_path),
-                            Err(e) => warn!("Failed to update Chart.lock at {}: {}", lock_path, e),
-                        }
-                    }
-                }
-            }
-
-            // Automerge hint for single-dependency groups.
-            if group.candidates.len() == 1 {
-                let candidate = &group.candidates[0];
-                let update_type = UpdateType::classify(
-                    &candidate.dependency.current_version,
-                    &candidate.new_version.original_tag,
-                );
-                let evaluator =
-                    AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-                let policy_automerge = update_type.as_ref().map_or(false, |ut| {
-                    evaluator.should_automerge(&candidate.dependency.name, ut, None)
-                });
-                if self.config.merge_request.auto_merge || policy_automerge {
-                    info!(
-                        "Automerge would be applied for {} ({:?}) [local mode]",
-                        candidate.dependency.name, update_type,
-                    );
-                }
-            }
+            self.apply_group_local(source, group, &branch_name).await;
         }
         Ok(())
+    }
+
+    async fn apply_group_local(&self, source: &dyn FileSource, group: &Group, branch_name: &str) {
+        let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
+        for candidate in &group.candidates {
+            by_file.entry(candidate.dependency.file_path.clone()).or_default().push(candidate);
+        }
+
+        for (file_path, file_candidates) in &by_file {
+            let original_content = &file_candidates[0].file_content;
+            let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
+                .iter()
+                .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
+                .collect();
+            let (file_update, errors) = updater::apply_updates(updates, original_content, file_path);
+            for e in &errors {
+                error!("Failed to apply update in group '{}': {}", group.name, e);
+            }
+            let commit_msg = if file_candidates.len() == 1 {
+                let c = file_candidates[0];
+                format!("chore(deps): update {} from {} to {}", c.dependency.name, c.dependency.current_version, c.new_version.original_tag)
+            } else {
+                format!("chore(deps): grouped update for '{}'", group.name)
+            };
+            match source.commit_file(branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await {
+                Ok(commit) => info!("Committed {} update(s) on branch {} ({})", file_candidates.len(), branch_name, commit),
+                Err(e) => error!("Failed to commit to {}: {}", branch_name, e),
+            }
+            self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name).await;
+        }
+
+        // Log automerge hint for single-dependency groups.
+        if group.candidates.len() == 1 {
+            let candidate = &group.candidates[0];
+            let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
+            let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
+            let policy_automerge = update_type.as_ref().map_or(false, |ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            if self.config.merge_request.auto_merge || policy_automerge {
+                info!("Automerge would be applied for {} ({:?}) [local mode]", candidate.dependency.name, update_type);
+            }
+        }
+    }
+
+    async fn maybe_update_chart_lock(
+        &self,
+        source: &dyn FileSource,
+        file_path: &str,
+        file_candidates: &[&UpdateCandidate],
+        branch_name: &str,
+    ) {
+        if !self.config.lockfile.enabled || !file_path.ends_with("Chart.yaml") {
+            return;
+        }
+        let lock_path = chart_lock_path(file_path);
+        let Ok(lock_content) = source.get_file(&lock_path, branch_name).await else { return };
+        let mut updated_lock = lock_content;
+        for c in file_candidates {
+            let new_digest = self.fetch_dep_digest(&c.dependency.registry, &c.new_version.original_tag).await;
+            updated_lock = lockfile::update_chart_lock(&updated_lock, &c.dependency.name, &c.new_version.original_tag, &new_digest);
+        }
+        let lock_commit_msg = format!(
+            "chore(deps): update Chart.lock for {}",
+            file_candidates.iter().map(|c| c.dependency.name.as_str()).collect::<Vec<_>>().join(", ")
+        );
+        match source.commit_file(branch_name, &lock_path, &updated_lock, &lock_commit_msg).await {
+            Ok(_) => info!("Updated Chart.lock at {}", lock_path),
+            Err(e) => warn!("Failed to update Chart.lock at {}: {}", lock_path, e),
+        }
     }
 
     async fn create_gitlab_mrs(
@@ -514,7 +487,10 @@ impl Orchestrator {
         default_branch: &str,
         groups: &[Group],
     ) -> Result<()> {
-        let gitlab = self.gitlab.as_ref().expect("GitLab client required");
+        let gitlab = self
+            .gitlab
+            .as_ref()
+            .ok_or_else(|| crate::error::ReforgeError::Config("GitLab client required".into()))?;
 
         // Check schedule window before attempting to create any MRs.
         if let Some(window) = &self.config.merge_request.schedule_window {
@@ -636,13 +612,13 @@ impl Orchestrator {
 
         let versions = match &dep.registry {
             RegistrySource::DockerRegistry { .. } => {
-                self.docker_registry.fetch_versions(&dep.registry).await?
+                self.registry.docker.fetch_versions(&dep.registry).await?
             }
             RegistrySource::HelmRepository { .. } => {
-                self.helm_registry.fetch_versions(&dep.registry).await?
+                self.registry.helm.fetch_versions(&dep.registry).await?
             }
             RegistrySource::OciHelmRegistry { .. } => {
-                self.helm_registry.fetch_versions(&dep.registry).await?
+                self.registry.helm.fetch_versions(&dep.registry).await?
             }
         };
 
@@ -676,134 +652,75 @@ impl Orchestrator {
     ) -> Result<()> {
         source.create_branch(branch_name, default_branch).await?;
 
-        // Group candidates by file for multi-file support.
         let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
         for candidate in &group.candidates {
-            by_file
-                .entry(candidate.dependency.file_path.clone())
-                .or_default()
-                .push(candidate);
+            by_file.entry(candidate.dependency.file_path.clone()).or_default().push(candidate);
         }
-
         for (file_path, file_candidates) in &by_file {
-            let original_content = &file_candidates[0].file_content;
-            let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
-                .iter()
-                .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
-                .collect();
-
-            let (file_update, errors) =
-                updater::apply_updates(updates, original_content, file_path);
-
-            for e in &errors {
-                error!("Failed to apply update in group '{}': {}", group.name, e);
-            }
-
-            let commit_msg = if file_candidates.len() == 1 {
-                let c = file_candidates[0];
-                format!(
-                    "chore(deps): update {} from {} to {}",
-                    c.dependency.name,
-                    c.dependency.current_version,
-                    c.new_version.original_tag,
-                )
-            } else {
-                format!("chore(deps): grouped update for '{}'", group.name)
-            };
-
-            source
-                .commit_file(
-                    branch_name,
-                    &file_update.file_path,
-                    &file_update.updated_content,
-                    &commit_msg,
-                )
-                .await?;
-
-            // Update sibling Chart.lock when lockfile maintenance is enabled.
-            if self.config.lockfile.enabled && file_path.ends_with("Chart.yaml") {
-                let lock_path = chart_lock_path(file_path);
-                if let Ok(lock_content) = source.get_file(&lock_path, branch_name).await {
-                    let mut updated_lock = lock_content.clone();
-                    for c in file_candidates {
-                        let dep_name = &c.dependency.name;
-                        let new_ver = c.new_version.original_tag.as_str();
-                        let new_digest =
-                            self.fetch_dep_digest(&c.dependency.registry, new_ver).await;
-                        updated_lock = lockfile::update_chart_lock(
-                            &updated_lock,
-                            dep_name,
-                            new_ver,
-                            &new_digest,
-                        );
-                    }
-                    let lock_commit_msg = format!(
-                        "chore(deps): update Chart.lock for {}",
-                        file_candidates
-                            .iter()
-                            .map(|c| c.dependency.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    );
-                    match source
-                        .commit_file(branch_name, &lock_path, &updated_lock, &lock_commit_msg)
-                        .await
-                    {
-                        Ok(_) => info!("Updated Chart.lock at {}", lock_path),
-                        Err(e) => warn!("Failed to update Chart.lock at {}: {}", lock_path, e),
-                    }
-                }
-            }
+            self.commit_single_file_gitlab(source, file_path, file_candidates, &group.name, branch_name).await?;
         }
 
         let changelog_notes = self.maybe_fetch_changelog(group).await;
         let vulns = self.maybe_check_vulnerabilities(group).await;
-        let (mr_title, mr_body) =
-            self.build_group_mr_content(group, changelog_notes.as_deref(), &vulns);
+        let (mr_title, mr_body) = self.build_group_mr_content(group, changelog_notes.as_deref(), &vulns);
+        let use_automerge = self.should_automerge_group(group);
 
-        // Automerge: only enable when the group contains a single dependency.
-        let use_automerge = if group.candidates.len() == 1 {
-            let candidate = &group.candidates[0];
-            let update_type = UpdateType::classify(
-                &candidate.dependency.current_version,
-                &candidate.new_version.original_tag,
-            );
-            let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().map_or(false, |ut| {
-                evaluator.should_automerge(&candidate.dependency.name, ut, None)
-            });
-            self.config.merge_request.auto_merge || policy_automerge
-        } else {
-            self.config.merge_request.auto_merge
-        };
-
-        // Append security labels when the update fixes known vulnerabilities.
         let mut labels = self.config.merge_request.labels.clone();
-        if !vulns.is_empty() {
-            for lbl in &self.config.vulnerability.security_labels {
-                if !labels.contains(lbl) {
-                    labels.push(lbl.clone());
-                }
+        for lbl in &self.config.vulnerability.security_labels {
+            if !vulns.is_empty() && !labels.contains(lbl) {
+                labels.push(lbl.clone());
             }
         }
 
-        let mr = gitlab
-            .create_mr(
-                project,
-                CreateMrParams {
-                    source_branch: branch_name.to_string(),
-                    target_branch: default_branch.to_string(),
-                    title: mr_title,
-                    description: mr_body,
-                    labels,
-                    assignee_ids: self.config.merge_request.assignees.clone(),
-                    merge_when_pipeline_succeeds: if use_automerge { Some(true) } else { None },
-                },
-            )
-            .await?;
+        let mr = gitlab.create_mr(project, CreateMrParams {
+            source_branch: branch_name.to_string(),
+            target_branch: default_branch.to_string(),
+            title: mr_title,
+            description: mr_body,
+            labels,
+            assignee_ids: self.config.merge_request.assignees.clone(),
+            merge_when_pipeline_succeeds: if use_automerge { Some(true) } else { None },
+        }).await?;
 
         info!("Created MR !{}: {}", mr.iid, mr.web_url);
         Ok(())
+    }
+
+    /// Apply updates for a single file and commit to the GitLab branch.
+    async fn commit_single_file_gitlab(
+        &self,
+        source: &dyn FileSource,
+        file_path: &str,
+        file_candidates: &[&UpdateCandidate],
+        group_name: &str,
+        branch_name: &str,
+    ) -> Result<()> {
+        let original_content = &file_candidates[0].file_content;
+        let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
+            .iter().map(|c| (&c.dependency, c.new_version.original_tag.as_str())).collect();
+        let (file_update, errors) = updater::apply_updates(updates, original_content, file_path);
+        for e in &errors { error!("Failed to apply update in group '{}': {}", group_name, e); }
+        let commit_msg = if file_candidates.len() == 1 {
+            let c = file_candidates[0];
+            format!("chore(deps): update {} from {} to {}", c.dependency.name, c.dependency.current_version, c.new_version.original_tag)
+        } else {
+            format!("chore(deps): grouped update for '{}'", group_name)
+        };
+        source.commit_file(branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await?;
+        self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name).await;
+        Ok(())
+    }
+
+    fn should_automerge_group(&self, group: &Group) -> bool {
+        if group.candidates.len() == 1 {
+            let candidate = &group.candidates[0];
+            let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
+            let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
+            let policy_automerge = update_type.as_ref().map_or(false, |ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            self.config.merge_request.auto_merge || policy_automerge
+        } else {
+            self.config.merge_request.auto_merge
+        }
     }
 
     /// Build the MR title and body for a group of update candidates.
@@ -894,7 +811,7 @@ impl Orchestrator {
                 }
             }
         };
-        self.changelog_fetcher
+        self.enricher.changelog
             .fetch_release_notes(
                 &candidate.dependency.name,
                 Some(&registry_source_str),
@@ -926,7 +843,7 @@ impl Orchestrator {
             }
 
             let mut vulns = self
-                .vuln_checker
+                .enricher.vuln
                 .check_dependency(
                     &candidate.dependency.name,
                     ecosystem,
@@ -941,102 +858,28 @@ impl Orchestrator {
     }
 
     /// In local mode, iterate local branches with the reforge prefix and rebase
-    /// any that are behind the default branch or have conflicts.
+    /// Rebase or recreate local reforge branches that are stale.
     async fn rebase_local_branches(
         &self,
         repo: &crate::platform::git::GitRepo,
         default_branch: &str,
     ) {
         use crate::rebase::StaleMrStrategy;
-
         let strategy = &self.config.merge_request.stale_mr_strategy;
-        if *strategy == StaleMrStrategy::Ignore {
-            return;
-        }
+        if *strategy == StaleMrStrategy::Ignore { return; }
 
         let prefix = &self.config.merge_request.branch_prefix;
-
-        // Enumerate local branches.
         let branches: Vec<String> = match repo.run(&["branch", "--list", &format!("{}*", prefix)]).await {
-            Ok(out) => out
-                .lines()
-                .map(|l: &str| l.trim().trim_start_matches("* ").to_string())
-                .filter(|b: &String| !b.is_empty())
-                .collect(),
-            Err(e) => {
-                warn!("Failed to list local reforge branches: {}", e);
-                return;
-            }
+            Ok(out) => out.lines().map(|l: &str| l.trim().trim_start_matches("* ").to_string()).filter(|b: &String| !b.is_empty()).collect(),
+            Err(e) => { warn!("Failed to list local reforge branches: {}", e); return; }
         };
 
         for branch in &branches {
-            // Check for conflicts by dry-run merging into default_branch.
-            let original = match repo.current_branch().await {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-
-            // Check if branch is behind: compare merge-base with default_branch tip.
-            let is_behind = match repo
-                .run(&["merge-base", "--is-ancestor", default_branch, branch])
-                .await
-            {
-                // exit 0 means default_branch is an ancestor of branch (branch is up to date)
-                Ok(_) => false,
-                // exit 1 means not an ancestor (branch is behind)
-                Err(_) => true,
-            };
-
-            // Check conflicts by checking out default and doing a dry-run merge.
-            let _ = repo.checkout(default_branch).await;
-            let has_conflicts = match repo.has_conflicts(branch).await {
-                Ok(c) => c,
-                Err(e) => {
-                    warn!("Could not check conflicts for branch '{}': {}", branch, e);
-                    let _ = repo.checkout(&original).await;
-                    continue;
-                }
-            };
-            let _ = repo.checkout(&original).await;
-
-            if !is_behind && !has_conflicts {
-                continue;
-            }
-
-            info!(
-                "Local branch '{}' is stale (behind={}, conflicts={}) — applying strategy '{:?}'",
-                branch, is_behind, has_conflicts, strategy
-            );
-
-            match strategy {
-                StaleMrStrategy::Rebase => {
-                    if let Err(e) = repo.rebase(branch, default_branch).await {
-                        warn!("Failed to rebase local branch '{}': {}", branch, e);
-                    } else {
-                        info!("Rebased local branch '{}' onto '{}'", branch, default_branch);
-                    }
-                }
-                StaleMrStrategy::Recreate => {
-                    // For local mode, recreate = delete branch and re-create from default.
-                    // The update will be re-applied on the next scan.
-                    if let Err(e) = repo
-                        .run(&["branch", "-D", branch])
-                        .await
-                    {
-                        warn!("Failed to delete local branch '{}': {}", branch, e);
-                    } else {
-                        info!("Deleted stale local branch '{}' (will be recreated on next scan)", branch);
-                    }
-                }
-                StaleMrStrategy::Ignore => {}
-            }
+            rebase_single_local_branch(repo, branch, default_branch, strategy).await;
         }
     }
 
     /// Handle replacement/deprecation actions found after scanning dependencies.
-    ///
-    /// * `Replace` actions  → create a separate migration MR (or log in local mode).
-    /// * `DeprecationWarning` → log a warning (and note in dry-run output).
     async fn handle_replacement_actions(
         &self,
         source: &dyn FileSource,
@@ -1047,138 +890,97 @@ impl Orchestrator {
         for action in actions {
             match action {
                 ReplacementAction::DeprecationWarning { dep_name, file_path, reason } => {
-                    warn!(
-                        "[replacement] DEPRECATED: {} in {} — {}",
-                        dep_name,
-                        file_path,
-                        reason.as_deref().unwrap_or("no details"),
-                    );
+                    warn!("[replacement] DEPRECATED: {} in {} — {}", dep_name, file_path, reason.as_deref().unwrap_or("no details"));
                 }
                 ReplacementAction::Replace { dep_name, file_path, from_ref, to_ref, reason: _ } => {
                     if self.config.replacement.warn_only {
-                        warn!(
-                            "[replacement] {} in {} should be migrated: {} → {}",
-                            dep_name, file_path, from_ref, to_ref,
-                        );
+                        warn!("[replacement] {} in {} should be migrated: {} → {}", dep_name, file_path, from_ref, to_ref);
                         continue;
                     }
-
-                    info!(
-                        "[replacement] Creating migration MR: {} → {} ({})",
-                        from_ref, to_ref, file_path,
-                    );
-
-                    // Find the file content for this dependency.
-                    let file_content = all_deps
-                        .iter()
-                        .find(|(d, _)| d.name == *dep_name && d.file_path == *file_path)
-                        .map(|(_, content)| content.as_str())
-                        .unwrap_or("");
-
-                    let branch_name = format!(
-                        "{}replace-{}-{}",
-                        self.config.merge_request.branch_prefix,
-                        dep_name.replace('/', "-"),
-                        // short deterministic suffix
-                        {
-                            use std::collections::hash_map::DefaultHasher;
-                            use std::hash::{Hash, Hasher};
-                            let mut h = DefaultHasher::new();
-                            from_ref.hash(&mut h);
-                            to_ref.hash(&mut h);
-                            format!("{:08x}", h.finish() as u32)
-                        }
-                    );
-
-                    // Skip if branch already exists.
-                    match source.branch_exists(&branch_name).await {
-                        Ok(true) => {
-                            info!("[replacement] Branch {} already exists, skipping", branch_name);
-                            continue;
-                        }
-                        Ok(false) => {}
-                        Err(e) => {
-                            warn!("[replacement] Could not check branch existence: {}", e);
-                            continue;
-                        }
-                    }
-
-                    let default_branch = match source.default_branch().await {
-                        Ok(b) => b,
-                        Err(e) => {
-                            warn!("[replacement] Could not get default branch: {}", e);
-                            continue;
-                        }
-                    };
-
-                    if let Err(e) = source.create_branch(&branch_name, &default_branch).await {
-                        warn!("[replacement] Failed to create branch {}: {}", branch_name, e);
-                        continue;
-                    }
-
-                    let file_update = updater::apply_replacement(
-                        file_content,
-                        file_path,
-                        from_ref,
-                        to_ref,
-                    );
-
-                    let commit_msg = format!(
-                        "chore(deps): migrate {} from {} to {}",
-                        dep_name, from_ref, to_ref,
-                    );
-
-                    if let Err(e) = source
-                        .commit_file(
-                            &branch_name,
-                            &file_update.file_path,
-                            &file_update.updated_content,
-                            &commit_msg,
-                        )
-                        .await
-                    {
-                        warn!("[replacement] Failed to commit migration for {}: {}", dep_name, e);
-                        continue;
-                    }
-
-                    let mr_body = render_replacement_mr_body(action);
-                    let mr_title = format!(
-                        "chore(deps): migrate {} to {}",
-                        dep_name, to_ref,
-                    );
-
-                    if let Some(gitlab) = &self.gitlab {
-                        let mut labels = self.config.merge_request.labels.clone();
-                        labels.push("replacement".to_string());
-
-                        match gitlab
-                            .create_mr(
-                                label,
-                                CreateMrParams {
-                                    source_branch: branch_name.clone(),
-                                    target_branch: default_branch.clone(),
-                                    title: mr_title,
-                                    description: mr_body,
-                                    labels,
-                                    assignee_ids: self.config.merge_request.assignees.clone(),
-                                    merge_when_pipeline_succeeds: None,
-                                },
-                            )
-                            .await
-                        {
-                            Ok(mr) => info!("[replacement] Created migration MR !{}: {}", mr.iid, mr.web_url),
-                            Err(e) => warn!("[replacement] Failed to create migration MR: {}", e),
-                        }
-                    } else {
-                        // Local mode: the branch and commit are sufficient.
-                        info!(
-                            "[replacement] Local mode: migration branch '{}' created for {} → {}",
-                            branch_name, from_ref, to_ref,
-                        );
-                    }
+                    self.handle_replacement_replace(source, label, all_deps, dep_name, file_path, from_ref, to_ref, action).await;
                 }
             }
         }
+    }
+
+    async fn handle_replacement_replace(
+        &self,
+        source: &dyn FileSource,
+        label: &str,
+        all_deps: &[(Dependency, String)],
+        dep_name: &str,
+        file_path: &str,
+        from_ref: &str,
+        to_ref: &str,
+        action: &ReplacementAction,
+    ) {
+        info!("[replacement] Creating migration MR: {} → {} ({})", from_ref, to_ref, file_path);
+        let file_content = all_deps.iter()
+            .find(|(d, _)| d.name == dep_name && d.file_path == file_path)
+            .map(|(_, c)| c.as_str()).unwrap_or("");
+
+        let Some((branch_name, default_branch)) = self.commit_replacement_files(source, dep_name, file_path, from_ref, to_ref, file_content).await else { return };
+
+        let mr_body = render_replacement_mr_body(action);
+        let mr_title = format!("chore(deps): migrate {} to {}", dep_name, to_ref);
+
+        if let Some(gitlab) = &self.gitlab {
+            let mut labels = self.config.merge_request.labels.clone();
+            labels.push("replacement".to_string());
+            match gitlab.create_mr(label, CreateMrParams {
+                source_branch: branch_name.clone(),
+                target_branch: default_branch,
+                title: mr_title,
+                description: mr_body,
+                labels,
+                assignee_ids: self.config.merge_request.assignees.clone(),
+                merge_when_pipeline_succeeds: None,
+            }).await {
+                Ok(mr) => info!("[replacement] Created migration MR !{}: {}", mr.iid, mr.web_url),
+                Err(e) => warn!("[replacement] Failed to create migration MR: {}", e),
+            }
+        } else {
+            info!("[replacement] Local mode: migration branch '{}' created for {} → {}", branch_name, from_ref, to_ref);
+        }
+    }
+
+    /// Creates a replacement branch and commits the migration. Returns (branch_name, default_branch)
+    /// on success, or `None` if the branch already exists or an error occurs.
+    async fn commit_replacement_files(
+        &self,
+        source: &dyn FileSource,
+        dep_name: &str,
+        file_path: &str,
+        from_ref: &str,
+        to_ref: &str,
+        file_content: &str,
+    ) -> Option<(String, String)> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut h = DefaultHasher::new();
+        from_ref.hash(&mut h);
+        to_ref.hash(&mut h);
+        let branch_name = format!("{}replace-{}-{:08x}", self.config.merge_request.branch_prefix, dep_name.replace('/', "-"), h.finish() as u32);
+
+        match source.branch_exists(&branch_name).await {
+            Ok(true) => { info!("[replacement] Branch {} already exists, skipping", branch_name); return None; }
+            Ok(false) => {}
+            Err(e) => { warn!("[replacement] Could not check branch existence: {}", e); return None; }
+        }
+
+        let default_branch = match source.default_branch().await {
+            Ok(b) => b,
+            Err(e) => { warn!("[replacement] Could not get default branch: {}", e); return None; }
+        };
+        if let Err(e) = source.create_branch(&branch_name, &default_branch).await {
+            warn!("[replacement] Failed to create branch {}: {}", branch_name, e); return None;
+        }
+        let file_update = updater::apply_replacement(file_content, file_path, from_ref, to_ref);
+        let commit_msg = format!("chore(deps): migrate {} from {} to {}", dep_name, from_ref, to_ref);
+        if let Err(e) = source.commit_file(&branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await {
+            warn!("[replacement] Failed to commit migration for {}: {}", dep_name, e); return None;
+        }
+        Some((branch_name, default_branch))
     }
 
     fn branch_name_for(&self, dep: &Dependency, new_version: &VersionInfo) -> String {
@@ -1214,16 +1016,15 @@ impl Orchestrator {
     }
 
     fn matches_any_pattern(&self, path: &str) -> bool {
-        self.managers
+        self.scanner.managers
             .iter()
             .enumerate()
             .any(|(idx, m)| self.file_matches_manager_at(path, m.as_ref(), idx))
     }
 
     fn file_matches_manager(&self, path: &str, manager: &dyn PackageManager) -> bool {
-        // Find the index of this manager by pointer comparison.
         let idx = self
-            .managers
+            .scanner.managers
             .iter()
             .position(|m| std::ptr::eq(m.as_ref() as *const _, manager as *const _))
             .unwrap_or(usize::MAX);
@@ -1234,7 +1035,6 @@ impl Orchestrator {
         let static_patterns = manager.file_patterns();
 
         if !static_patterns.is_empty() {
-            // Built-in manager with static patterns.
             let filename = path.rsplit('/').next().unwrap_or(path);
             return static_patterns.iter().any(|pattern| {
                 if pattern.contains('*') {
@@ -1250,12 +1050,11 @@ impl Orchestrator {
             });
         }
 
-        // Regex manager: look up dynamic patterns by index offset.
         // Regex managers are appended after built-in managers.
-        let builtin_count = self.managers.len() - self.regex_manager_patterns.len();
+        let builtin_count = self.scanner.managers.len() - self.scanner.regex_manager_patterns.len();
         if idx >= builtin_count {
             let rm_idx = idx - builtin_count;
-            if let Some(patterns) = self.regex_manager_patterns.get(rm_idx) {
+            if let Some(patterns) = self.scanner.regex_manager_patterns.get(rm_idx) {
                 return patterns
                     .iter()
                     .any(|p| crate::manager::regex::file_matches_pattern(path, p));
@@ -1268,7 +1067,7 @@ impl Orchestrator {
     /// Fetch the digest for a helm dependency. Returns a placeholder on failure
     /// so the rest of the update can proceed.
     async fn fetch_dep_digest(&self, registry: &RegistrySource, version: &str) -> String {
-        match lockfile::fetch_chart_digest(&self.http_client, registry, version).await {
+        match lockfile::fetch_chart_digest(&self.registry.http, registry, version).await {
             Ok(d) => d,
             Err(e) => {
                 warn!("Could not fetch chart digest: {}", e);
@@ -1289,14 +1088,13 @@ impl Orchestrator {
                 candidate.dependency.name.clone(),
                 candidate.new_version.original_tag.clone(),
             );
-            if seen.contains(&key) {
+            if !seen.insert(key) {
                 debug!(
                     "Dedup: skipping duplicate candidate {} {} (from {})",
-                    key.0, key.1, candidate.dependency.file_path,
+                    candidate.dependency.name, candidate.new_version.original_tag, candidate.dependency.file_path,
                 );
                 continue;
             }
-            seen.insert(key);
             deduped.push(candidate);
         }
 
@@ -1367,6 +1165,57 @@ impl Orchestrator {
 
         println!("{}", "-".repeat(72));
         println!("Total: {} update(s) available\n", candidates.len());
+    }
+}
+
+/// Check staleness of a single local branch and apply the configured strategy.
+async fn rebase_single_local_branch(
+    repo: &crate::platform::git::GitRepo,
+    branch: &str,
+    default_branch: &str,
+    strategy: &crate::rebase::StaleMrStrategy,
+) {
+    use crate::rebase::StaleMrStrategy;
+
+    let original = match repo.current_branch().await {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    // exit 0: default_branch is an ancestor of branch (up to date); exit 1: branch is behind
+    let is_behind = repo.run(&["merge-base", "--is-ancestor", default_branch, branch]).await.is_err();
+
+    let _ = repo.checkout(default_branch).await;
+    let has_conflicts = match repo.has_conflicts(branch).await {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("Could not check conflicts for branch '{}': {}", branch, e);
+            let _ = repo.checkout(&original).await;
+            return;
+        }
+    };
+    let _ = repo.checkout(&original).await;
+
+    if !is_behind && !has_conflicts {
+        return;
+    }
+    info!("Local branch '{}' is stale (behind={}, conflicts={}) — applying strategy '{:?}'", branch, is_behind, has_conflicts, strategy);
+
+    match strategy {
+        StaleMrStrategy::Rebase => {
+            if let Err(e) = repo.rebase(branch, default_branch).await {
+                warn!("Failed to rebase local branch '{}': {}", branch, e);
+            } else {
+                info!("Rebased local branch '{}' onto '{}'", branch, default_branch);
+            }
+        }
+        StaleMrStrategy::Recreate => {
+            if let Err(e) = repo.run(&["branch", "-D", branch]).await {
+                warn!("Failed to delete local branch '{}': {}", branch, e);
+            } else {
+                info!("Deleted stale local branch '{}' (will be recreated on next scan)", branch);
+            }
+        }
+        StaleMrStrategy::Ignore => {}
     }
 }
 

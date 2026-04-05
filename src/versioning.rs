@@ -1,22 +1,15 @@
 use semver::Version;
+use serde::Deserialize;
 
 use crate::registry::VersionInfo;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
 pub enum PinStrategy {
     SemverPatch,
+    #[default]
     SemverMinor,
     SemverMajor,
-}
-
-impl PinStrategy {
-    pub fn from_str(s: &str) -> Self {
-        match s {
-            "semver-patch" => Self::SemverPatch,
-            "semver-major" => Self::SemverMajor,
-            _ => Self::SemverMinor,
-        }
-    }
 }
 
 pub struct VersionPolicy {

@@ -88,14 +88,14 @@ impl FileSource for GitLabSource {
         content: &str,
         message: &str,
     ) -> Result<String> {
-        use crate::platform::gitlab::CommitAction;
+        use crate::platform::gitlab::{CommitAction, CommitActionKind};
         self.client
             .commit_files(
                 &self.project,
                 branch,
                 message,
                 vec![CommitAction {
-                    action: "update".to_string(),
+                    action: CommitActionKind::Update,
                     file_path: file_path.to_string(),
                     content: content.to_string(),
                 }],

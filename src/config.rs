@@ -92,6 +92,15 @@ impl Default for ReplacementConfig {
     }
 }
 
+/// Datasource type for a custom regex manager.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum Datasource {
+    Docker,
+    HelmOci,
+    HelmRepo,
+}
+
 /// Configuration for a single custom regex manager.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RegexManagerConfig {
@@ -102,8 +111,8 @@ pub struct RegexManagerConfig {
     /// Regex with named capture groups: `depName`, `currentValue`.
     /// Optional groups: `registryUrl`, `datasource`.
     pub match_pattern: String,
-    /// Datasource to use when looking up versions: `docker`, `helm-oci`, or `helm-repo`.
-    pub datasource: String,
+    /// Datasource to use when looking up versions.
+    pub datasource: Datasource,
     /// Registry URL override (used when the regex does not capture `registryUrl`).
     #[serde(default)]
     pub registry_url: Option<String>,
@@ -129,16 +138,6 @@ impl RegexManagerConfig {
                 return Err(ReforgeError::Config(format!(
                     "regex_manager '{}': match_pattern is missing required named capture group '(?P<{}>...)'",
                     self.name, required
-                )));
-            }
-        }
-
-        match self.datasource.as_str() {
-            "docker" | "helm-oci" | "helm-repo" => {}
-            other => {
-                return Err(ReforgeError::Config(format!(
-                    "regex_manager '{}': unknown datasource '{}'; expected docker, helm-oci, or helm-repo",
-                    self.name, other
                 )));
             }
         }
@@ -196,22 +195,10 @@ fn default_managers() -> Vec<String> {
     vec!["helm".to_string(), "docker".to_string()]
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct VersioningConfig {
-    #[serde(default = "default_pin_strategy")]
-    pub pin_strategy: String,
-}
-
-impl Default for VersioningConfig {
-    fn default() -> Self {
-        Self {
-            pin_strategy: default_pin_strategy(),
-        }
-    }
-}
-
-fn default_pin_strategy() -> String {
-    "semver-minor".to_string()
+    #[serde(default)]
+    pub pin_strategy: crate::versioning::PinStrategy,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

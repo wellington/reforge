@@ -28,19 +28,18 @@ struct HelmChartEntry {
 }
 
 impl HelmRegistryClient {
-    pub fn new(credentials: HashMap<String, RegistryCredential>) -> Self {
+    pub fn new(credentials: HashMap<String, RegistryCredential>) -> crate::error::Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("Failed to build HTTP client");
+            .build()?;
 
-        let docker_client = DockerRegistryClient::new(credentials.clone());
+        let docker_client = DockerRegistryClient::new(credentials.clone())?;
 
-        Self {
+        Ok(Self {
             client,
             docker_client,
             credentials,
-        }
+        })
     }
 
     async fn fetch_from_helm_repo(

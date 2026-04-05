@@ -23,9 +23,18 @@ pub struct TreeEntry {
     pub mode: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CommitActionKind {
+    Create,
+    Update,
+    Delete,
+    Move,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CommitAction {
-    pub action: String,
+    pub action: CommitActionKind,
     pub file_path: String,
     pub content: String,
 }

@@ -247,11 +247,7 @@ pub fn write_local_dashboard(body: &str, path: &str) -> Result<()> {
 }
 
 fn manager_name(registry: &RegistrySource) -> &'static str {
-    match registry {
-        RegistrySource::DockerRegistry { .. } => "docker",
-        RegistrySource::HelmRepository { .. } => "helm",
-        RegistrySource::OciHelmRegistry { .. } => "helm",
-    }
+    crate::util::manager_name(registry)
 }
 
 #[cfg(test)]

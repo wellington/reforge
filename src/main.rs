@@ -13,6 +13,7 @@ mod registry;
 mod replacement;
 mod scheduling;
 mod updater;
+mod util;
 mod versioning;
 mod vulnerability;
 

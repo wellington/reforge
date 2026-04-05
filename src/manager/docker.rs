@@ -26,17 +26,7 @@ impl DockerManager {
     }
 
     fn parse_image_reference(image: &str) -> (Option<String>, String) {
-        if let Some(idx) = image.rfind('/') {
-            let prefix = &image[..idx];
-            let name = &image[idx + 1..];
-            if prefix.contains('.') || prefix.contains(':') {
-                return (Some(prefix.to_string()), name.to_string());
-            }
-            // Looks like a Docker Hub org/image
-            (None, image.to_string())
-        } else {
-            (None, image.to_string())
-        }
+        crate::util::parse_image_reference(image)
     }
 
     fn extract_dockerfile_deps(

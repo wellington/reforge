@@ -27,16 +27,15 @@ struct TokenResponse {
 }
 
 impl DockerRegistryClient {
-    pub fn new(credentials: HashMap<String, RegistryCredential>) -> Self {
+    pub fn new(credentials: HashMap<String, RegistryCredential>) -> crate::error::Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("Failed to build HTTP client");
+            .build()?;
 
-        Self {
+        Ok(Self {
             client,
             credentials,
-        }
+        })
     }
 
     fn resolve_registry_url(

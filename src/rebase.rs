@@ -130,14 +130,14 @@ pub async fn recreate_mr_branch(
         .await?;
 
     // Re-apply the update.
-    use crate::platform::gitlab::CommitAction;
+    use crate::platform::gitlab::{CommitAction, CommitActionKind};
     gitlab
         .commit_files(
             project,
             &mr.source_branch,
             commit_message,
             vec![CommitAction {
-                action: "update".to_string(),
+                action: CommitActionKind::Update,
                 file_path: file_path.to_string(),
                 content: updated_content.to_string(),
             }],

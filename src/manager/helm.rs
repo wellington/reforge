@@ -184,16 +184,7 @@ fn tag_as_string(val: &serde_yaml::Value) -> Option<String> {
 }
 
 fn parse_docker_image(image: &str) -> (Option<String>, String) {
-    if let Some(idx) = image.rfind('/') {
-        let prefix = &image[..idx];
-        let name = &image[idx + 1..];
-        if prefix.contains('.') || prefix.contains(':') {
-            return (Some(prefix.to_string()), name.to_string());
-        }
-        (None, image.to_string())
-    } else {
-        (None, image.to_string())
-    }
+    crate::util::parse_image_reference(image)
 }
 
 fn parse_oci_reference(image: &str) -> (Option<String>, String) {

@@ -54,13 +54,8 @@ impl ReplacementRule {
     }
 }
 
-/// Simple glob matcher: only supports a single trailing `*`.
 fn glob_match(pattern: &str, value: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        value.starts_with(prefix)
-    } else {
-        pattern == value
-    }
+    crate::util::glob_match(pattern, value)
 }
 
 // ---------------------------------------------------------------------------

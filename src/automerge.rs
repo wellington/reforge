@@ -93,55 +93,9 @@ fn update_type_to_filter(ut: &UpdateType) -> UpdateTypeFilter {
     }
 }
 
-/// Simple glob matcher supporting `*` (matches any substring, not crossing `/`)
-/// and `**` (matches any substring including `/`).
+/// Glob matcher supporting `*` (any substring, not crossing `/`) and `**` (any substring).
 fn pattern_matches(pattern: &str, name: &str) -> bool {
-    if pattern == "*" || pattern == "**" {
-        return true;
-    }
-    glob_match(pattern, name)
-}
-
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
-    let text: Vec<char> = text.chars().collect();
-    glob_match_inner(&pattern, &text)
-}
-
-fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
-    match (pattern.first(), text.first()) {
-        (None, None) => true,
-        (None, _) => false,
-        (Some('*'), _) => {
-            // Check for `**`
-            if pattern.get(1) == Some(&'*') {
-                // `**` — consume any number of characters including '/'
-                let rest = &pattern[2..];
-                // Skip optional separator after `**`
-                let rest = if rest.first() == Some(&'/') { &rest[1..] } else { rest };
-                for i in 0..=text.len() {
-                    if glob_match_inner(rest, &text[i..]) {
-                        return true;
-                    }
-                }
-                false
-            } else {
-                // `*` — consume any number of characters except '/'
-                let rest = &pattern[1..];
-                for i in 0..=text.len() {
-                    if text[..i].iter().any(|&c| c == '/') {
-                        break;
-                    }
-                    if glob_match_inner(rest, &text[i..]) {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-        (Some(&p), Some(&t)) if p == t => glob_match_inner(&pattern[1..], &text[1..]),
-        _ => false,
-    }
+    crate::util::glob_match(pattern, name)
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use regex::{Regex, RegexBuilder};
 
-use crate::config::RegexManagerConfig;
+use crate::config::{Datasource, RegexManagerConfig};
 use crate::error::{ReforgeError, Result};
 use crate::manager::{Dependency, PackageManager, RegistrySource, UpdateContext};
 
@@ -40,8 +40,8 @@ impl RegexManager {
             .map(|u| u.trim_end_matches('/').to_string())
             .or_else(|| self.config.registry_url.clone());
 
-        match self.config.datasource.as_str() {
-            "docker" => {
+        match self.config.datasource {
+            Datasource::Docker => {
                 let registry = effective_registry.clone();
                 let image = match &registry {
                     Some(reg) => format!("{}/{}", reg, dep_name),
@@ -49,7 +49,7 @@ impl RegexManager {
                 };
                 RegistrySource::DockerRegistry { image, registry }
             }
-            "helm-oci" => {
+            Datasource::HelmOci => {
                 let image = match &effective_registry {
                     Some(reg) => {
                         let reg = reg.trim_start_matches("oci://");
@@ -62,7 +62,7 @@ impl RegexManager {
                     .map(|idx| image[..idx].to_string());
                 RegistrySource::OciHelmRegistry { image, registry }
             }
-            "helm-repo" => {
+            Datasource::HelmRepo => {
                 let repo_url = effective_registry
                     .unwrap_or_else(|| "https://charts.helm.sh/stable".to_string());
                 RegistrySource::HelmRepository {
@@ -70,8 +70,6 @@ impl RegexManager {
                     chart_name: dep_name.to_string(),
                 }
             }
-            // Validated at construction time, so this branch is unreachable.
-            _ => unreachable!("datasource already validated"),
         }
     }
 }
@@ -130,57 +128,28 @@ impl PackageManager for RegexManager {
 
 /// Check whether a file path matches a dynamic glob-style pattern.
 ///
-/// Supports leading `**/` (any directory prefix), trailing `*` wildcards, and
-/// exact filename matches.
+/// Supports leading `**/` (any directory prefix), `*` wildcards, and exact
+/// filename matches.
 pub fn file_matches_pattern(path: &str, pattern: &str) -> bool {
     let pattern = pattern.trim_start_matches("**/");
 
     if pattern.contains('/') {
         // Pattern contains a slash: match against the full path.
-        glob_match(path, pattern)
+        crate::util::glob_match(pattern, path)
     } else {
         // Pattern is a plain filename glob: match only against the filename.
         let filename = path.rsplit('/').next().unwrap_or(path);
-        glob_match(filename, pattern)
+        crate::util::glob_match(pattern, filename)
     }
-}
-
-fn glob_match(text: &str, pattern: &str) -> bool {
-    let parts: Vec<&str> = pattern.split('*').collect();
-    if parts.len() == 1 {
-        return text == pattern;
-    }
-
-    let mut remaining = text;
-
-    for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if i == 0 {
-            if !remaining.starts_with(part) {
-                return false;
-            }
-            remaining = &remaining[part.len()..];
-        } else if i == parts.len() - 1 {
-            return remaining.ends_with(part);
-        } else if let Some(pos) = remaining.find(part) {
-            remaining = &remaining[pos + part.len()..];
-        } else {
-            return false;
-        }
-    }
-
-    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RegexManagerConfig;
+    use crate::config::{Datasource, RegexManagerConfig};
 
     fn make_config(
-        datasource: &str,
+        datasource: Datasource,
         pattern: &str,
         registry_url: Option<&str>,
     ) -> RegexManagerConfig {
@@ -188,7 +157,7 @@ mod tests {
             name: "test".to_string(),
             file_patterns: vec!["*.yaml".to_string()],
             match_pattern: pattern.to_string(),
-            datasource: datasource.to_string(),
+            datasource,
             registry_url: registry_url.map(|s| s.to_string()),
             versioning: None,
         }
@@ -200,7 +169,7 @@ mod tests {
         // followed by helmVersion on the next line.
         let pattern =
             "helmChart:\\s*['\"]?(?:oci://[^'\"\\s]*/)?(?P<depName>[^'\"\\s/]+)['\"]?\\s*\nhelmVersion:\\s*['\"]?(?P<currentValue>[^'\"\\s]+)";
-        let config = make_config("helm-oci", pattern, Some("oci://oci-charts.example.com"));
+        let config = make_config(Datasource::HelmOci, pattern, Some("oci://oci-charts.example.com"));
         let mgr = RegexManager::new(config).unwrap();
 
         let contents = "\
@@ -217,7 +186,7 @@ helmVersion: '14.1.0'\n";
     #[test]
     fn test_docker_datasource() {
         let pattern = r"image:\s*(?P<depName>[^:\s]+):(?P<currentValue>[^\s]+)";
-        let config = make_config("docker", pattern, None);
+        let config = make_config(Datasource::Docker, pattern, None);
         let mgr = RegexManager::new(config).unwrap();
 
         let contents = "image: nginx:1.25.3\n";
@@ -235,7 +204,7 @@ helmVersion: '14.1.0'\n";
     fn test_helm_repo_datasource() {
         let pattern = r"chart:\s*(?P<depName>[^\s]+)\s*\nversion:\s*(?P<currentValue>[^\s]+)";
         let config = make_config(
-            "helm-repo",
+            Datasource::HelmRepo,
             pattern,
             Some("https://charts.bitnami.com/bitnami"),
         );
@@ -255,7 +224,7 @@ helmVersion: '14.1.0'\n";
     #[test]
     fn test_validation_missing_dep_name() {
         let config = make_config(
-            "docker",
+            Datasource::Docker,
             r"image:\s*(?P<currentValue>[^\s]+)",
             None,
         );
@@ -266,7 +235,7 @@ helmVersion: '14.1.0'\n";
     #[test]
     fn test_validation_missing_current_value() {
         let config = make_config(
-            "docker",
+            Datasource::Docker,
             r"image:\s*(?P<depName>[^\s]+)",
             None,
         );
@@ -276,26 +245,15 @@ helmVersion: '14.1.0'\n";
 
     #[test]
     fn test_validation_invalid_regex() {
-        let config = make_config("docker", r"(?P<depName>[", None);
+        let config = make_config(Datasource::Docker, r"(?P<depName>[", None);
         let err = RegexManager::new(config).unwrap_err();
         assert!(err.to_string().contains("invalid") || err.to_string().contains("failed"));
     }
 
     #[test]
-    fn test_validation_unknown_datasource() {
-        let config = make_config(
-            "unknown-ds",
-            r"(?P<depName>[^\s]+):(?P<currentValue>[^\s]+)",
-            None,
-        );
-        let err = RegexManager::new(config).unwrap_err();
-        assert!(err.to_string().contains("datasource"));
-    }
-
-    #[test]
     fn test_multiple_matches() {
         let pattern = r"image:\s*(?P<depName>[^:\s]+):(?P<currentValue>[^\s]+)";
-        let config = make_config("docker", pattern, None);
+        let config = make_config(Datasource::Docker, pattern, None);
         let mgr = RegexManager::new(config).unwrap();
 
         let contents = "image: nginx:1.25.3\nimage: redis:7.2\n";
@@ -308,7 +266,7 @@ helmVersion: '14.1.0'\n";
     #[test]
     fn test_registry_url_capture_group() {
         let pattern = r"(?P<registryUrl>https://[^/]+)/(?P<depName>[^:\s]+):(?P<currentValue>[^\s]+)";
-        let config = make_config("docker", pattern, None);
+        let config = make_config(Datasource::Docker, pattern, None);
         let mgr = RegexManager::new(config).unwrap();
 
         let contents = "https://registry.example.com/myapp:v1.2.3\n";
@@ -325,6 +283,8 @@ helmVersion: '14.1.0'\n";
         assert!(!file_matches_pattern("Chart.json", "Chart.yaml"));
         assert!(file_matches_pattern("values-prod.yaml", "values-*.yaml"));
         assert!(!file_matches_pattern("values-prod.yaml", "Chart.yaml"));
-        assert!(file_matches_pattern("apps/login/app.yaml", "**/apps/*.yaml"));
+        assert!(!file_matches_pattern("apps/login/app.yaml", "**/apps/*.yaml"));
+        assert!(file_matches_pattern("apps/app.yaml", "**/apps/*.yaml"));
+        assert!(file_matches_pattern("apps/login/app.yaml", "apps/**/*.yaml"));
     }
 }
