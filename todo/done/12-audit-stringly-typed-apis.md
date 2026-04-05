@@ -1,7 +1,7 @@
 # [HIGH] Replace stringly-typed fields with enums
 
 ## Priority: High
-## Status: Done (moved to todo/done/)
+## Status: Done
 
 ## Description
 
@@ -42,7 +42,7 @@ Stringly-typed fields require runtime validation, produce unhelpful error messag
 
 ## Acceptance Criteria
 
-- [ ] At least `CommitAction.action`, `VersioningConfig.pin_strategy`, and `RegexManagerConfig.datasource` use enums
-- [ ] `PinStrategy` implements `FromStr` or is used directly in `VersioningConfig` via serde
-- [ ] Runtime validation code (e.g., `match datasource.as_str()` in `RegexManagerConfig::validate`) is removed in favor of serde deserialization errors
-- [ ] `cargo check` and `cargo test` pass
+- [x] At least `CommitAction.action`, `VersioningConfig.pin_strategy`, and `RegexManagerConfig.datasource` use enums
+- [x] `PinStrategy` implements `FromStr` or is used directly in `VersioningConfig` via serde
+- [x] Runtime validation code (e.g., `match datasource.as_str()` in `RegexManagerConfig::validate`) is removed in favor of serde deserialization errors
+- [x] `cargo check` and `cargo test` pass

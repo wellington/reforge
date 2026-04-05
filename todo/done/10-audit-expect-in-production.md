@@ -1,7 +1,7 @@
 # [HIGH] Replace `expect()` / `unwrap()` calls in production code with proper error handling
 
 ## Priority: High
-## Status: Done (moved to todo/done/)
+## Status: Done
 
 ## Description
 
@@ -31,6 +31,6 @@ Error Handling (Audit Checklist §1)
 
 ## Acceptance Criteria
 
-- [ ] No `.expect()` calls remain in `src/` outside of `#[cfg(test)]` modules and `LazyLock` static regex initialization
-- [ ] `DockerRegistryClient::new()` and `HelmRegistryClient::new()` return `Result`
-- [ ] `cargo check` and `cargo test` pass
+- [x] No `.expect()` calls remain in `src/` outside of `#[cfg(test)]` modules and `LazyLock` static regex initialization
+- [x] `DockerRegistryClient::new()` and `HelmRegistryClient::new()` return `Result`
+- [x] `cargo check` and `cargo test` pass

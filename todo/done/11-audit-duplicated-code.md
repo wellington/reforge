@@ -1,7 +1,7 @@
 # [HIGH] Extract duplicated utility functions into shared modules
 
 ## Priority: High
-## Status: Done (moved to todo/done/)
+## Status: Done
 
 ## Description
 
@@ -42,7 +42,7 @@ Four different glob matching implementations exist across the codebase with subt
 
 ## Acceptance Criteria
 
-- [ ] Single `glob_match` implementation used by `automerge`, `grouping`, `replacement`, and `manager::regex`
-- [ ] Single `manager_name` function shared by `grouping` and `dashboard`
-- [ ] Single `parse_image_reference` function shared by `manager::docker` and `manager::helm`
-- [ ] `cargo test` passes — all existing tests still work against the shared implementations
+- [x] Single `glob_match` implementation used by `automerge`, `grouping`, `replacement`, and `manager::regex`
+- [x] Single `manager_name` function shared by `grouping` and `dashboard`
+- [x] Single `parse_image_reference` function shared by `manager::docker` and `manager::helm`
+- [x] `cargo test` passes — all existing tests still work against the shared implementations

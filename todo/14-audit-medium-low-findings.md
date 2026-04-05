@@ -1,7 +1,7 @@
 # [MEDIUM/LOW] Grouped audit findings — code quality improvements
 
 ## Priority: Medium/Low
-## Status: Open
+## Status: Done (moved to todo/done/)
 
 ## Description
 

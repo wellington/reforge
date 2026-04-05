@@ -1,7 +1,7 @@
 # [MEDIUM] Break up the Orchestrator god struct
 
 ## Priority: Medium
-## Status: Done (moved to todo/done/)
+## Status: Done
 
 ## Description
 
@@ -31,7 +31,7 @@ The `Orchestrator` should remain as a thin coordinator that delegates to these c
 
 ## Acceptance Criteria
 
-- [ ] `Orchestrator` has ≤8 fields
-- [ ] No method on `Orchestrator` exceeds 60 lines
-- [ ] Extracted types are independently unit-testable
-- [ ] `cargo test` passes with no regressions
+- [x] `Orchestrator` has ≤8 fields
+- [x] No method on `Orchestrator` exceeds 60 lines
+- [x] Extracted types are independently unit-testable
+- [x] `cargo test` passes with no regressions

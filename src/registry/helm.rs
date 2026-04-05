@@ -20,11 +20,8 @@ struct HelmIndex {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct HelmChartEntry {
     version: String,
-    #[serde(default)]
-    name: String,
 }
 
 impl HelmRegistryClient {

@@ -40,14 +40,15 @@ pub struct Config {
 
 /// Configuration for lock-file maintenance.
 #[derive(Debug, Clone, Deserialize)]
-#[allow(dead_code)]
 pub struct LockfileConfig {
     /// Whether to update Chart.lock alongside Chart.yaml (default: true).
     #[serde(default = "default_lockfile_enabled")]
     pub enabled: bool,
     /// Path to the helm binary for local mode (e.g. `/usr/local/bin/helm`).
     /// When `None`, reforge computes digests itself without invoking helm.
+    /// Reserved for future helm-CLI-based digest fetching.
     #[serde(default)]
+    #[allow(dead_code)]
     pub helm_binary: Option<String>,
 }
 
@@ -116,7 +117,7 @@ pub struct RegexManagerConfig {
     /// Registry URL override (used when the regex does not capture `registryUrl`).
     #[serde(default)]
     pub registry_url: Option<String>,
-    /// Versioning scheme override (currently informational).
+    /// Versioning scheme override (reserved for future per-manager version policies).
     #[serde(default)]
     #[allow(dead_code)]
     pub versioning: Option<String>,
@@ -437,6 +438,7 @@ pub struct VulnerabilityConfig {
     #[serde(default = "default_security_labels")]
     pub security_labels: Vec<String>,
     /// When true, security updates bypass rate limits and are scheduled first.
+    /// Reserved for future priority-based scheduling integration.
     #[serde(default = "default_priority_boost")]
     #[allow(dead_code)]
     pub priority_boost: bool,
