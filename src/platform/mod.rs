@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use crate::error::Result;
 
 /// A single file entry returned when walking a repository tree.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FileEntry {
     pub path: String,
 }

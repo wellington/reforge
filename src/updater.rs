@@ -29,7 +29,6 @@ pub fn apply_updates<'a>(
     (
         FileUpdate {
             file_path: file_path.to_string(),
-            original_content: file_content.to_string(),
             updated_content: current_content,
         },
         errors,
@@ -37,10 +36,8 @@ pub fn apply_updates<'a>(
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct FileUpdate {
     pub file_path: String,
-    pub original_content: String,
     pub updated_content: String,
 }
 
@@ -79,7 +76,6 @@ pub fn apply_update(
 
     Ok(FileUpdate {
         file_path: dependency.file_path.clone(),
-        original_content: file_content.to_string(),
         updated_content: updated,
     })
 }
@@ -161,7 +157,6 @@ pub fn apply_replacement(
     let updated_content = file_content.replacen(old_ref, new_ref, 1);
     FileUpdate {
         file_path: file_path.to_string(),
-        original_content: file_content.to_string(),
         updated_content,
     }
 }

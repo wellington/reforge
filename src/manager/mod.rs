@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use crate::error::Result;
 
 /// A detected dependency in a managed file.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dependency {
     pub name: String,
     pub current_version: String,
@@ -16,7 +16,7 @@ pub struct Dependency {
     pub update_context: UpdateContext,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegistrySource {
     DockerRegistry {
         image: String,
@@ -32,7 +32,7 @@ pub enum RegistrySource {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum UpdateContext {
     YamlKeyPath { keys: Vec<String> },

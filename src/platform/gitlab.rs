@@ -127,15 +127,14 @@ impl GitLabClient {
         project.replace('/', "%2F")
     }
 
-    async fn request_with_retry(
+    fn build_request(
         &self,
         method: reqwest::Method,
         url: &str,
-    ) -> Result<reqwest::RequestBuilder> {
-        Ok(self
-            .client
+    ) -> reqwest::RequestBuilder {
+        self.client
             .request(method, url)
-            .header(PRIVATE_TOKEN, &self.token))
+            .header(PRIVATE_TOKEN, &self.token)
     }
 
     async fn send_with_retry(&self, request: reqwest::RequestBuilder) -> Result<reqwest::Response> {

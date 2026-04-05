@@ -6,7 +6,7 @@ use crate::error::{ReforgeError, Result};
 
 /// Wraps the local `git` binary for async execution.
 pub struct GitRepo {
-    pub path: PathBuf,
+    pub(crate) path: PathBuf,
 }
 
 impl GitRepo {

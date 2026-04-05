@@ -69,7 +69,7 @@ pub struct Orchestrator {
     replacement_db: ReplacementDatabase,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct UpdateCandidate {
     pub dependency: Dependency,
     pub new_version: VersionInfo,
@@ -243,7 +243,7 @@ impl Orchestrator {
             }
         }
 
-        let candidates = self.check_updates_concurrent(all_deps.clone()).await;
+        let candidates = self.check_updates_concurrent(&all_deps).await;
         info!("Found {} available updates (before dedup)", candidates.len());
         let candidates = Self::deduplicate_candidates(candidates);
         info!("Found {} available updates (after dedup)", candidates.len());
@@ -278,9 +278,9 @@ impl Orchestrator {
     /// Run all dep-version checks concurrently and return only the candidates that have updates.
     async fn check_updates_concurrent(
         &self,
-        all_deps: Vec<(Dependency, String)>,
+        all_deps: &[(Dependency, String)],
     ) -> Vec<UpdateCandidate> {
-        stream::iter(all_deps)
+        stream::iter(all_deps.iter().cloned())
             .map(|(dep, content)| async move { self.check_for_update(dep, content).await })
             .buffer_unordered(CONCURRENCY_LIMIT)
             .filter_map(|result| async move {

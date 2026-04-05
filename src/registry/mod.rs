@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::manager::RegistrySource;
 
 /// A resolved version from a registry, preserving the original tag string.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
     pub version: semver::Version,
     pub original_tag: String,
