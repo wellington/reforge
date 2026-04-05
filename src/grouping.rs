@@ -86,13 +86,18 @@ pub fn group_candidates(
             }
         }
         _ => {
+            let mut per_dep: HashMap<String, usize> = HashMap::new();
             for candidate in unmatched {
                 let manager = manager_name(&candidate.dependency.registry);
                 let sanitized = candidate.dependency.name.replace('/', "-");
-                groups.push(Group {
-                    name: format!("{}-{}", manager, sanitized),
-                    candidates: vec![candidate],
-                });
+                let name = format!("{}-{}", manager, sanitized);
+                if let Some(&idx) = per_dep.get(&name) {
+                    groups[idx].candidates.push(candidate);
+                } else {
+                    let idx = groups.len();
+                    per_dep.insert(name.clone(), idx);
+                    groups.push(Group { name, candidates: vec![candidate] });
+                }
             }
         }
     }

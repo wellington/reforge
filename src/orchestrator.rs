@@ -1080,13 +1080,14 @@ impl Orchestrator {
     /// detected from multiple managers/files. Keeps only the first occurrence
     /// per (name, new_version) key and logs duplicates that are merged.
     fn deduplicate_candidates(candidates: Vec<UpdateCandidate>) -> Vec<UpdateCandidate> {
-        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut seen: HashSet<(String, String, String)> = HashSet::new();
         let mut deduped: Vec<UpdateCandidate> = Vec::with_capacity(candidates.len());
 
         for candidate in candidates {
             let key = (
                 candidate.dependency.name.clone(),
                 candidate.new_version.original_tag.clone(),
+                candidate.dependency.file_path.clone(),
             );
             if !seen.insert(key) {
                 debug!(
@@ -1348,7 +1349,7 @@ mod tests {
     fn dedup_removes_duplicate_candidates() {
         let candidates = vec![
             make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile"),
-            make_candidate("nginx", "1.25.0", "1.26.0", "apps/web/login.yaml"),
+            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile"),
             make_candidate("alpine", "3.18.0", "3.19.0", "Dockerfile"),
         ];
 
@@ -1356,5 +1357,18 @@ mod tests {
         assert_eq!(deduped.len(), 2);
         assert_eq!(deduped[0].dependency.name, "nginx");
         assert_eq!(deduped[1].dependency.name, "alpine");
+    }
+
+    #[test]
+    fn dedup_keeps_same_dep_in_different_files() {
+        let candidates = vec![
+            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile"),
+            make_candidate("nginx", "1.25.0", "1.26.0", "apps/web/login.yaml"),
+        ];
+
+        let deduped = Orchestrator::deduplicate_candidates(candidates);
+        assert_eq!(deduped.len(), 2);
+        assert_eq!(deduped[0].dependency.file_path, "Dockerfile");
+        assert_eq!(deduped[1].dependency.file_path, "apps/web/login.yaml");
     }
 }

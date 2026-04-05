@@ -57,6 +57,8 @@ These steps require human judgment and cannot be fully automated:
 - The GitLab instance uses a self-signed TLS certificate, so all API calls require `-k` (curl) or `insecure = true` (reforge config).
 - If all dependencies are already up to date, reforge will create zero MRs. This is correct behavior but will cause the validation step to fail. In this case, manually verify the dashboard shows "all up to date" and consider the test passed.
 - Pipeline status checking has a 5-minute timeout. Long-running pipelines may not complete within that window.
+- **Pre-existing MRs without `reforge-e2e-test` label**: If production reforge MRs already exist for the same updates, reforge will skip creation (branch already exists). The teardown only removes MRs with the e2e label. To get a clean run, manually close all open reforge MRs and delete their branches first, or merge them.
+- No CI pipeline is currently configured in `poc/configurations`, so pipeline validation reports "none" for all MRs. This is expected until `.gitlab-ci.yml` is added.
 
 ## Teardown Details
 
