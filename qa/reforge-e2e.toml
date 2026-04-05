@@ -1,0 +1,45 @@
+[gitlab]
+url = "https://gitlab.mgmt.procoregov-qa.internal"
+insecure = true
+
+[scan]
+projects = ["poc/configurations"]
+
+[managers]
+enabled = ["helm", "docker"]
+
+[versioning]
+pin_strategy = "semver-minor"
+
+[merge_request]
+branch_prefix = "reforge/"
+labels = ["reforge", "automated", "reforge-e2e-test"]
+grouping = "per-dependency"
+auto_merge = false
+rebase_enabled = false
+
+[dashboard]
+enabled = true
+labels = ["reforge", "dependency-dashboard"]
+
+[changelog]
+enabled = false
+
+[vulnerability]
+enabled = false
+
+[replacement]
+enabled = true
+warn_only = true
+
+[lockfile]
+enabled = true
+
+[registries."oci-charts.artifacts.procoretech.com"]
+password_env = "ARTIFACTORY_API_KEY"
+
+[[regex_managers]]
+name = "argocd-helm-version"
+file_patterns = ["apps/**/*.yaml"]
+match_pattern = 'helmChart:\s*"oci://(?P<registryUrl>[^"]+/[^"]+)/(?P<depName>[^"/]+)"\nhelmVersion:\s*"(?P<currentValue>[^"]+)"'
+datasource = "helm-oci"

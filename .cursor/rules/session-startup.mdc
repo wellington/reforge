@@ -18,4 +18,5 @@ When completing a TODO:
 - Verify the acceptance criteria are met
 - Run `cargo check` and `cargo test` to confirm no regressions
 - Move the TODO file to `todo/done/`
+- Create a git commit summarizing the completed work
 - Update `.claude/knowledge/` if the work produced notable findings
