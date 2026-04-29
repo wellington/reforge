@@ -106,7 +106,7 @@ url = "https://gitlab.example.com"
 
 [scan]
 # List of GitLab project paths to scan
-projects = ["procore-fed/traffic/api-gateway"]
+projects = ["my-group/my-project"]
 
 [managers]
 enabled = ["helm", "docker"]

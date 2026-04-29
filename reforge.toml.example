@@ -4,7 +4,7 @@ url = "https://gitlab.example.com"
 
 [scan]
 # List of GitLab project paths to scan
-projects = ["procore-fed/traffic/api-gateway"]
+projects = ["my-group/my-project"]
 
 [managers]
 enabled = ["helm", "docker"]
@@ -30,7 +30,7 @@ auto_merge = false
 
 # [registries."registry.example.com"]
 # username = "deploy-token"
-# password_env = "REFORGE_REGISTRY_EXAMPLE_PASSWORD"
+# password_env = "REFORGE_REGISTRY_PASSWORD"
 
 # [registries."artifactory.example.com"]
 # username = "deploy-token"

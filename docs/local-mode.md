@@ -129,7 +129,7 @@ Local mode is convenient for validating a new `reforge.toml` in CI before it run
 ```yaml
 reforge:validate:
   stage: test
-  image: ghcr.io/procore/reforge:latest
+  image: ghcr.io/wellington/reforge:latest
   before_script:
     - git clone $CI_REPOSITORY_URL /tmp/repo
   script:

@@ -32,7 +32,7 @@ stages:
   - scan
 
 variables:
-  REFORGE_IMAGE: ghcr.io/procore/reforge:latest
+  REFORGE_IMAGE: ghcr.io/wellington/reforge:latest
 
 reforge:scan:
   stage: scan

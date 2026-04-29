@@ -11,7 +11,7 @@
 ### From source
 
 ```bash
-git clone https://github.com/procore/reforge
+git clone https://github.com/wellington/reforge
 cd reforge
 cargo build --release
 # Binary is at target/release/reforge
@@ -20,7 +20,7 @@ cargo build --release
 ### Docker image
 
 ```bash
-docker pull ghcr.io/procore/reforge:latest
+docker pull ghcr.io/wellington/reforge:latest
 ```
 
 ## Quickstart
