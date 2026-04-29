@@ -1,3 +1,12 @@
+//! Configuration loading and validation.
+//!
+//! Reforge configuration can come from multiple sources, layered in order:
+//! 1. `reforge.toml` file (base configuration)
+//! 2. Environment variables (`REFORGE_*`, with `RENOVATE_*` fallbacks)
+//! 3. CLI arguments (highest priority)
+//!
+//! See the crate-level documentation for a complete configuration reference.
+
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -6,6 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::error::{ReforgeError, Result};
 use crate::rebase::StaleMrStrategy;
 
+/// Top-level configuration for reforge.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default)]
