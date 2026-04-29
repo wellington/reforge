@@ -10,12 +10,12 @@ Reforge must support Renovate's parameters and features to maintain compatibilit
 
 ## Context
 
-Existing projects at Procore use Renovate configuration (`renovate.json`, `.renovaterc`, etc.) and depend on its behavior for dependency management. Reforge needs to be a drop-in replacement or compatible subset so teams can migrate without rewriting their configs.
+Existing projects may use Renovate configuration (`renovate.json`, `.renovaterc`, etc.) and depend on its behavior for dependency management. Reforge aims to be a drop-in replacement or compatible subset so teams can migrate without rewriting their configs.
 
 ## Next Steps
 
 - Investigate API gaps between reforge's current config surface and Renovate's config options
-- Identify which Renovate features are actively used in Procore codebases
+- Identify which Renovate features are actively used
 - Prioritize compatibility for the most-used Renovate parameters
 - Support reading `renovate.json` / `.renovaterc` / `.renovaterc.json` config formats
 - Map Renovate config keys to reforge equivalents where possible
@@ -23,4 +23,3 @@ Existing projects at Procore use Renovate configuration (`renovate.json`, `.reno
 
 ## Notes
 - Reforge already accepts `RENOVATE_TOKEN` and `RENOVATE_GITLAB_URL` env vars as migration fallbacks (see `project-naming.md`)
-- Investigation will happen in a follow-up session after context clear

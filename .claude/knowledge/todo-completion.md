@@ -72,21 +72,6 @@ Key infrastructure changes for testing:
 - Fixed `FROM` line parsing — uses `split_image_tag` for correct port handling (`registry:PORT/image:tag`)
 - Bearer token auth — sends API key as Bearer when credential has `password_env` but no `username`
 
-### Live GitLab + Artifactory Test
-
-Reforge ran in full GitLab API mode against `poc/configurations` on `gitlab.mgmt.procoregov-qa.internal`, creating 4 MRs and a Dependency Dashboard issue:
-- MR !1: `curlimages/curl 8.12.1 -> 8.18.0` (Docker Hub)
-- MR !2: `stateless-http-service 14.1.0 -> 14.9.0` (Artifactory OCI)
-- MR !3: `hashicorp/vault 1.17.0 -> 1.21.4` (Docker Hub)
-- MR !4: `nginx 1.27.0 -> 1.29.7` (Docker Hub)
-- Issue #1: Dependency Dashboard
-
-Additional features added during integration testing:
-- `gitlab.insecure = true` — skip TLS cert verification for self-signed GitLab
-- `RegistryCredential.base_url` — override registry URL for mock/proxy testing
-- Bearer token pre-auth for Artifactory OCI (API key sent without username)
-- Fixed Dockerfile FROM parsing for registry:PORT/image:tag patterns
-
 ## Notes
 - The `todo/` folder files are historical specs — the features they describe are now implemented in `src/`.
 - **See also:** [agent-orchestration-strategy.md](agent-orchestration-strategy.md), [project-architecture.md](project-architecture.md)

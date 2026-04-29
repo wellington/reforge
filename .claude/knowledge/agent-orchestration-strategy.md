@@ -16,7 +16,7 @@ Applies when working through the todo backlog. Each agent gets a self-contained 
 
 ### Execution Model
 
-- One background `agent` invocation per todo item, run sequentially (background agents cannot safely be parallelized due to branch conflicts and print-mode limitations — see `orchestrating-cursor-agents.mdc`).
+- One background `agent` invocation per todo item, run sequentially (background agents cannot safely be parallelized due to branch conflicts and print-mode limitations).
 - Each agent works on a feature branch created via `git worktree` to avoid conflicts.
 - After each agent completes, the orchestrator verifies the work (`cargo check`, `cargo test`, file inspection) before merging.
 
@@ -25,25 +25,19 @@ Applies when working through the todo backlog. Each agent gets a self-contained 
 Each dispatched agent receives:
 1. The full todo spec from `todo/NN-*.md`
 2. Relevant source files to read and modify
-3. The configurations repo path for integration testing
-4. The `ARTIFACTORY_API_KEY` env var for registry integration tests against `oci-charts.artifacts.procoretech.com`
+3. A configurations repo path for integration testing (if available)
+4. Registry credentials via env vars for integration tests (e.g., `REGISTRY_API_KEY`)
 5. Explicit instructions to: create a feature branch, implement the feature, write tests, run `cargo check` + `cargo test`, commit with a descriptive message, and NOT push
 
 ### Integration Testing
 
-- The configurations repo at `/home/drew/src/gitlab.mgmt.procoregov-qa.internal/poc/configurations` provides real YAML files for parser testing.
-- No Docker registry is available locally, so there is no container build/push step.
-- Reforge operates against the local filesystem (local git mode, todo/01) rather than the GitLab API for this development cycle.
-
-### No GitLab API Available
-
-Since there's no reachable GitLab instance for API testing, the first priority is implementing local git support (todo/01) so that reforge can operate against the local configurations repo checkout.
+- Use a local configurations repo with real YAML files for parser testing.
+- Reforge can operate against the local filesystem (local git mode) rather than the GitLab API for development.
 
 ## Summary
 
-Spawn one agent per todo, sequentially, using git worktrees for isolation. Verify each agent's output before proceeding. Use the local configurations repo and Artifactory API key for integration testing.
+Spawn one agent per todo, sequentially, using git worktrees for isolation. Verify each agent's output before proceeding. Use a local configurations repo and registry credentials for integration testing.
 
 ## Notes
 - **See also:** [project-architecture.md](project-architecture.md)
 - Background agent print mode does NOT work — agents must run in foreground or sequential background.
-- The `ARTIFACTORY_API_KEY` env var is available in the shell environment.

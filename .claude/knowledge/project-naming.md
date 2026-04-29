@@ -48,6 +48,4 @@ Use `reforge` for all new naming. Accept `RENOVATE_` env vars for migration comp
 
 ## Notes
 - The `implementation-plan.md` file still references the old `renovate-rs` naming — it's a historical document and was intentionally not updated.
-- The local directory was renamed from `retrofit` to `reforge` (at `/home/drew/src/github.com/procore/reforge/`).
-- The deployment target is `poc/configurations` on `gitlab.mgmt.procoregov-qa.internal` (project ID 4). See `deployment-plan.md` for full details.
 - **See also:** [project-architecture.md](project-architecture.md)

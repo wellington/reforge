@@ -62,17 +62,9 @@ Applies to all development on this project. Understanding the module layout is e
 - **Integration tests:** 6 end-to-end tests in `tests/end_to_end.rs` using `wiremock` for mock Docker/OCI registries and `tempfile` for ephemeral git repos
 - **Dev dependencies:** `wiremock`, `tempfile`, `serde_json`
 
-### Live Verified
-
-Reforge has been run against the real `poc/configurations` repo on `gitlab.mgmt.procoregov-qa.internal`, creating 4 MRs via the GitLab API:
-- `stateless-http-service 14.1.0 -> 14.9.0` (Artifactory OCI)
-- `curlimages/curl 8.12.1 -> 8.18.0` (Docker Hub)
-- `hashicorp/vault 1.17.0 -> 1.21.4` (Docker Hub)
-- `nginx 1.27.0 -> 1.29.7` (Docker Hub)
-
 ## Summary
 
-The codebase is ~15,000 lines of Rust across 20 source files (plus 592 lines of integration tests) with 167 total tests. The project is named **reforge** (see `project-naming.md`). All 11 planned features from the original `todo/` backlog are implemented and verified. The tool runs in production against a real GitLab instance with real Artifactory OCI registry integration.
+The codebase is ~15,000 lines of Rust across 20 source files (plus 592 lines of integration tests) with 167 total tests. The project is named **reforge** (see `project-naming.md`). All 11 planned features from the original `todo/` backlog are implemented and verified.
 
 ## Notes
 - Project paths are URL-encoded with `%2F` for GitLab API calls — custom `urlencoding` module in `platform/gitlab.rs`.
