@@ -1,3 +1,12 @@
+//! GitLab REST API client.
+//!
+//! Provides async methods for interacting with GitLab's v4 API:
+//! - Project and repository operations (branches, files, trees)
+//! - Merge request lifecycle (create, update, rebase, merge)
+//! - Issue management (for the dependency dashboard)
+//!
+//! Includes automatic retry logic for rate limiting and server errors.
+
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
@@ -6,6 +15,7 @@ use crate::error::{ReforgeError, Result};
 const PRIVATE_TOKEN: &str = "PRIVATE-TOKEN";
 const MAX_RETRIES: u32 = 3;
 
+/// Async client for the GitLab REST API.
 pub struct GitLabClient {
     client: reqwest::Client,
     base_url: String,
