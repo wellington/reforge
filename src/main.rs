@@ -73,9 +73,17 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Initialize tracing
-    let filter = EnvFilter::try_new(&cli.log_level)
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    // Initialize tracing with the specified log level
+    let filter = match EnvFilter::try_new(&cli.log_level) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!(
+                "Warning: invalid log level '{}' ({}), defaulting to 'info'",
+                cli.log_level, e
+            );
+            EnvFilter::new("info")
+        }
+    };
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)

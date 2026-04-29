@@ -1,11 +1,21 @@
+//! Local git repository operations via the `git` CLI.
+//!
+//! This module provides [`GitRepo`], an async wrapper around the `git` binary
+//! for performing common operations: branching, committing, rebasing, and
+//! conflict detection.
+
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tracing::debug;
 
 use crate::error::{ReforgeError, Result};
 
-/// Wraps the local `git` binary for async execution.
+/// Async wrapper around a local git repository.
+///
+/// All operations spawn `git` subprocesses and capture their output.
+/// The repository path is stored and used as the working directory.
 pub struct GitRepo {
+    /// Path to the repository root directory.
     pub(crate) path: PathBuf,
 }
 
@@ -51,8 +61,15 @@ impl GitRepo {
     /// Clone a remote repository to a local path.
     #[allow(dead_code)]
     pub async fn clone(url: &str, dest: &Path) -> Result<Self> {
+        let dest_str = dest.to_str().ok_or_else(|| {
+            ReforgeError::Git(format!(
+                "Clone destination path contains invalid UTF-8: {}",
+                dest.display()
+            ))
+        })?;
+
         let output = Command::new("git")
-            .args(["clone", url, dest.to_str().unwrap_or(".")])
+            .args(["clone", url, dest_str])
             .output()
             .await
             .map_err(|e| ReforgeError::Git(format!("Failed to spawn git clone: {}", e)))?;

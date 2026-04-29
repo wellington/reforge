@@ -1,18 +1,29 @@
+//! Stale MR detection and remediation.
+//!
+//! Merge requests become "stale" when their target branch advances or when
+//! they develop merge conflicts. This module provides:
+//! - [`StalenessChecker`] for detecting stale MRs
+//! - [`handle_stale_mrs`] for applying remediation strategies
+//!
+//! Strategies:
+//! - **Rebase**: Ask GitLab to rebase the branch (default)
+//! - **Recreate**: Delete and recreate the branch from current target
+//! - **Ignore**: Leave stale MRs untouched
+
 use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::error::Result;
 use crate::platform::gitlab::{GitLabClient, MergeRequest};
 
-/// How to handle MRs whose target branch has moved forward or that have conflicts.
+/// Strategy for handling MRs that are behind or have conflicts.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum StaleMrStrategy {
-    /// Ask GitLab to rebase the MR branch onto the current target branch.
+    /// Rebase the MR branch onto the current target branch.
     #[default]
     Rebase,
-    /// Delete and recreate the source branch from the current target branch,
-    /// re-applying the dependency update commit.
+    /// Delete and recreate the branch, re-applying the update commit.
     Recreate,
     /// Leave stale MRs untouched.
     Ignore,

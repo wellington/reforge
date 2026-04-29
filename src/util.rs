@@ -1,9 +1,23 @@
+//! Shared utility functions.
+//!
+//! Contains glob pattern matching and image reference parsing used
+//! across multiple modules.
+
 use crate::manager::RegistrySource;
 
-/// Canonical glob matcher supporting:
-/// - `*` — matches any sequence of characters that does not include `/`
-/// - `**` — matches any sequence of characters including `/`
+/// Matches a glob pattern against text.
+///
+/// Supports:
+/// - `*` — matches any sequence of characters **not** including `/`
+/// - `**` — matches any sequence of characters **including** `/`
 /// - Any other character — matches exactly
+///
+/// # Examples
+/// ```ignore
+/// assert!(glob_match("*.yaml", "values.yaml"));
+/// assert!(glob_match("apps/**/*.yaml", "apps/web/config.yaml"));
+/// assert!(!glob_match("*.yaml", "subdir/values.yaml"));
+/// ```
 pub fn glob_match(pattern: &str, text: &str) -> bool {
     if pattern == "*" || pattern == "**" {
         return true;
@@ -47,20 +61,27 @@ fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
     }
 }
 
-/// Returns a short manager name string for a registry source.
+/// Returns the manager name for a registry source.
+///
+/// Used for branch naming and MR grouping.
 pub fn manager_name(registry: &RegistrySource) -> &'static str {
     match registry {
         RegistrySource::DockerRegistry { .. } => "docker",
-        RegistrySource::HelmRepository { .. } => "helm",
-        RegistrySource::OciHelmRegistry { .. } => "helm",
+        RegistrySource::HelmRepository { .. } | RegistrySource::OciHelmRegistry { .. } => "helm",
     }
 }
 
-/// Parse a Docker image reference into `(registry_prefix, name)`.
+/// Parses a Docker image reference into `(registry, name)` components.
 ///
-/// Returns `Some(prefix)` only when the prefix looks like a registry host
-/// (contains `.` or `:`). Plain Docker Hub org/image references like
-/// `library/nginx` return `(None, "library/nginx")`.
+/// Returns `Some(registry)` only when the prefix looks like a registry host
+/// (contains `.` or `:`). Plain Docker Hub references like `library/nginx`
+/// return `(None, "library/nginx")`.
+///
+/// # Examples
+/// ```ignore
+/// assert_eq!(parse_image_reference("nginx"), (None, "nginx".into()));
+/// assert_eq!(parse_image_reference("ghcr.io/owner/app"), (Some("ghcr.io/owner".into()), "app".into()));
+/// ```
 pub fn parse_image_reference(image: &str) -> (Option<String>, String) {
     if let Some(idx) = image.rfind('/') {
         let prefix = &image[..idx];

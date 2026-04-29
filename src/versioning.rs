@@ -1,18 +1,36 @@
+//! Version pinning strategies and update policies.
+//!
+//! This module defines how reforge selects which updates to propose:
+//! - **SemverPatch**: Only patch updates (1.2.3 → 1.2.4)
+//! - **SemverMinor**: Minor and patch updates (1.2.3 → 1.3.0)
+//! - **SemverMajor**: Any update including major versions (1.2.3 → 2.0.0)
+//!
+//! Pre-release versions are always skipped.
+
 use semver::Version;
 use serde::Deserialize;
 
 use crate::registry::VersionInfo;
 
-#[derive(Debug, Clone, Deserialize, Default)]
+/// Controls which semver components may be updated.
+///
+/// The strategy determines the maximum "distance" an update can traverse
+/// from the current version. Pre-release versions are always excluded.
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PinStrategy {
+    /// Only update the patch component (e.g., 1.2.3 → 1.2.4).
     SemverPatch,
+    /// Update minor or patch components (e.g., 1.2.3 → 1.3.0). Default.
     #[default]
     SemverMinor,
+    /// Allow any update including major versions (e.g., 1.2.3 → 2.0.0).
     SemverMajor,
 }
 
+/// Evaluates available versions against a pinning strategy.
 pub struct VersionPolicy {
+    /// The strategy controlling which updates are allowed.
     pub strategy: PinStrategy,
 }
 

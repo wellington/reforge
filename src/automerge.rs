@@ -1,13 +1,24 @@
+//! Automerge policy evaluation for dependency updates.
+//!
+//! This module determines whether a dependency update qualifies for automatic
+//! merging based on configured policies. Policies can match by:
+//! - Dependency name (glob patterns)
+//! - Update type (patch, minor, major)
+//! - Minimum age requirements
+
 use chrono::{DateTime, Utc};
 use semver::Version;
 
 use crate::config::{AutomergePolicy, UpdateTypeFilter};
 
-/// Semver bump classification for a dependency update.
+/// Classification of a semver version bump.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpdateType {
+    /// Only the patch version changed (e.g., 1.2.3 → 1.2.4).
     Patch,
+    /// The minor version changed (e.g., 1.2.3 → 1.3.0).
     Minor,
+    /// The major version changed (e.g., 1.2.3 → 2.0.0).
     Major,
 }
 

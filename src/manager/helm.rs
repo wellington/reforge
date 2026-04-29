@@ -1,9 +1,16 @@
+//! Helm chart dependency manager.
+//!
+//! Extracts Helm chart dependencies from Chart.yaml and container image
+//! references from values.yaml files.
+
 use serde::Deserialize;
 use tracing::warn;
 
 use crate::error::{ReforgeError, Result};
 use crate::manager::{Dependency, PackageManager, RegistrySource, UpdateContext};
 
+/// Extracts Helm dependencies from Chart.yaml and image refs from values.yaml.
+#[derive(Debug, Default)]
 pub struct HelmManager;
 
 #[derive(Debug, Deserialize)]

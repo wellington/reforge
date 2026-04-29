@@ -1,3 +1,12 @@
+//! Platform abstractions for file and git operations.
+//!
+//! This module provides the [`FileSource`] trait which abstracts over:
+//! - [`GitLabSource`] — operates via the GitLab REST API
+//! - [`LocalGitSource`] — operates on a local git checkout
+//!
+//! This abstraction allows the orchestrator to work identically whether
+//! running against a remote GitLab project or a local repository.
+
 pub mod git;
 pub mod gitlab;
 
@@ -6,31 +15,43 @@ use std::path::PathBuf;
 
 use crate::error::Result;
 
-/// A single file entry returned when walking a repository tree.
+/// A file entry from a repository tree listing.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FileEntry {
+    /// Relative path from repository root.
     pub path: String,
 }
 
-/// Abstracts file access over either the GitLab API or a local git checkout.
+/// Abstracts file and git operations over different backends.
+///
+/// This trait allows reforge to work with both:
+/// - Remote GitLab projects via the REST API
+/// - Local git checkouts via shell commands
+///
+/// Implementations handle authentication, API pagination, and the
+/// differences between remote and local file operations.
 #[async_trait]
 pub trait FileSource: Send + Sync {
-    /// Determine the default branch name for the project/repo.
+    /// Returns the default branch name (e.g., "main" or "master").
     async fn default_branch(&self) -> Result<String>;
 
-    /// List all file paths in the repository (blobs only, recursive).
+    /// Lists all files in the repository tree.
+    ///
+    /// Returns only blob entries (files), not trees (directories).
     async fn list_files(&self, branch: &str) -> Result<Vec<FileEntry>>;
 
-    /// Return the text content of a file at the given path and branch/ref.
+    /// Reads the content of a file at the specified path and branch.
     async fn get_file(&self, path: &str, branch: &str) -> Result<String>;
 
-    /// Create a new branch from `base`.
+    /// Creates a new branch from a base reference.
     async fn create_branch(&self, branch: &str, base: &str) -> Result<()>;
 
-    /// Check whether a branch already exists.
+    /// Checks whether a branch exists.
     async fn branch_exists(&self, branch: &str) -> Result<bool>;
 
-    /// Write a file and commit it. Returns the commit identifier.
+    /// Writes file content and commits it to the specified branch.
+    ///
+    /// Returns an identifier for the commit (format varies by backend).
     async fn commit_file(
         &self,
         branch: &str,

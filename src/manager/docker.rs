@@ -1,23 +1,34 @@
+//! Docker/OCI container image dependency manager.
+//!
+//! Extracts image references from Dockerfiles and docker-compose files.
+
 use regex::Regex;
 use std::sync::LazyLock;
 
 use crate::error::{ReforgeError, Result};
 use crate::manager::{Dependency, PackageManager, RegistrySource, UpdateContext};
 
+/// Extracts Docker image dependencies from Dockerfiles and compose files.
+#[derive(Debug, Default)]
 pub struct DockerManager;
 
+/// Matches `FROM` instructions, capturing the image reference.
 static FROM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"(?i)^FROM\s+(?:--platform=\S+\s+)?(?P<reference>[^\s]+)\s*(?:AS\s+\S+)?$"
-    ).unwrap()
+    ).expect("FROM_RE is a valid regex")
 });
 
+/// Matches `ARG` instructions that define image references with tags.
 static ARG_IMAGE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^ARG\s+(\w+)=(.+?)(?::(?P<tag>[^\s@]+))?(?:@sha256:\w+)?\s*$").unwrap()
+    Regex::new(r"^ARG\s+(\w+)=(.+?)(?::(?P<tag>[^\s@]+))?(?:@sha256:\w+)?\s*$")
+        .expect("ARG_IMAGE_RE is a valid regex")
 });
 
+/// Matches `FROM` instructions that use variable substitution.
 static FROM_VAR_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^FROM\s+(?:--platform=\S+\s+)?\$\{?(\w+)\}?\s*").unwrap()
+    Regex::new(r"(?i)^FROM\s+(?:--platform=\S+\s+)?\$\{?(\w+)\}?\s*")
+        .expect("FROM_VAR_RE is a valid regex")
 });
 
 impl DockerManager {
