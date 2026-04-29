@@ -1,3 +1,12 @@
+//! Grouping logic for combining multiple updates into single MRs.
+//!
+//! By default, each dependency gets its own MR ("per-dependency" mode).
+//! Grouping rules can combine updates into batched MRs based on:
+//! - Name patterns (glob matching)
+//! - Update type (patch, minor, major)
+//! - Package manager (docker, helm)
+//! - File path (directory-based grouping)
+
 use std::collections::HashMap;
 
 use crate::automerge::UpdateType;
@@ -5,7 +14,7 @@ use crate::config::{GroupBy, GroupingRule};
 use crate::manager::RegistrySource;
 use crate::orchestrator::UpdateCandidate;
 
-/// A named collection of update candidates that should be combined into a single MR.
+/// A group of update candidates to be combined into a single MR.
 #[derive(Debug)]
 pub struct Group {
     /// Human-readable name for this group (used in branch names and MR titles).

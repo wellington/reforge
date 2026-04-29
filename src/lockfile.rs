@@ -1,3 +1,12 @@
+//! Helm Chart.lock file parsing and generation.
+//!
+//! When updating Helm chart dependencies in Chart.yaml, the companion
+//! Chart.lock file must also be updated with the new version and digest.
+//! This module handles:
+//! - Parsing existing Chart.lock files
+//! - Updating individual dependency versions and digests
+//! - Fetching chart digests from HTTP or OCI registries
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +16,7 @@ use tracing::debug;
 use crate::error::{ReforgeError, Result};
 use crate::manager::RegistrySource;
 
-/// Mirrors the structure of a Helm Chart.lock file.
+/// Represents a Helm Chart.lock file.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[allow(dead_code)]
 pub struct ChartLock {

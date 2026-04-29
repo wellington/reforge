@@ -1,7 +1,15 @@
+//! File content modification for applying version updates.
+//!
+//! Once a new version is determined, this module applies the update to
+//! file contents. Different strategies are used based on file type:
+//! - Dockerfiles: line-based replacement
+//! - YAML files: targeted key-value replacement preserving formatting
+//! - Regex matches: literal string substitution
+
 use crate::error::Result;
 use crate::manager::{Dependency, UpdateContext};
 
-/// Apply a sequence of updates to a single file, chaining the output of each
+/// Applies a sequence of updates to a single file, chaining the output of each
 /// update as the input for the next. Returns the final `FileUpdate` whose
 /// `updated_content` incorporates all changes.
 ///

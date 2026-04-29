@@ -1,7 +1,17 @@
+//! Changelog and release notes fetching for MR descriptions.
+//!
+//! Enriches dependency update MRs with release notes from:
+//! - GitHub Releases API
+//! - CHANGELOG.md files in GitHub repositories
+//!
+//! Notes are extracted for the version range being updated (from → to),
+//! truncated if necessary, and wrapped in a collapsible details block.
+
 use reqwest::Client;
 use serde::Deserialize;
 use tracing::{debug, warn};
 
+/// Fetches release notes from GitHub for dependency updates.
 pub struct ChangelogFetcher {
     client: Client,
     github_token: Option<String>,
