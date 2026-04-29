@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITLAB_URL="https://gitlab.mgmt.procoregov-qa.internal"
-GITLAB_PROJECT="poc%2Fconfigurations"
 E2E_LABEL="reforge-e2e-test"
 
-if [[ -n "${REFORGE_TOKEN:-}" ]]; then
-    TOKEN="$REFORGE_TOKEN"
-elif [[ -f "$HOME/.git-credentials" ]]; then
-    TOKEN=$(grep "gitlab.mgmt.procoregov-qa.internal" "$HOME/.git-credentials" \
-        | head -1 \
-        | sed 's|.*://[^:]*:\([^@]*\)@.*|\1|')
-fi
-
-if [[ -z "${TOKEN:-}" ]]; then
-    echo "FAIL: No GitLab token. Set REFORGE_TOKEN or configure ~/.git-credentials"
+if [[ -z "${REFORGE_TOKEN:-}" ]]; then
+    echo "FAIL: REFORGE_TOKEN is not set"
     exit 1
 fi
+
+if [[ -z "${REFORGE_GITLAB_URL:-}" ]]; then
+    echo "FAIL: REFORGE_GITLAB_URL is not set"
+    exit 1
+fi
+
+if [[ -z "${REFORGE_GITLAB_PROJECT:-}" ]]; then
+    echo "FAIL: REFORGE_GITLAB_PROJECT is not set (e.g., 'my-group/my-project')"
+    exit 1
+fi
+
+GITLAB_URL="$REFORGE_GITLAB_URL"
+TOKEN="$REFORGE_TOKEN"
+GITLAB_PROJECT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$REFORGE_GITLAB_PROJECT', safe=''))")
 
 echo "=== Tearing down previous e2e test MRs ==="
 

@@ -1,9 +1,10 @@
 [gitlab]
-url = "https://gitlab.mgmt.procoregov-qa.internal"
+# Set via REFORGE_GITLAB_URL environment variable
+url = "https://gitlab.example.com"
 insecure = true
 
 [scan]
-projects = ["poc/configurations"]
+projects = ["test/configurations"]
 
 [managers]
 enabled = ["helm", "docker"]
@@ -35,8 +36,9 @@ warn_only = true
 [lockfile]
 enabled = true
 
-[registries."oci-charts.artifacts.procoretech.com"]
-password_env = "ARTIFACTORY_API_KEY"
+# Configure private registry credentials if needed
+# [registries."registry.example.com"]
+# password_env = "REGISTRY_API_KEY"
 
 [[regex_managers]]
 name = "argocd-helm-version"

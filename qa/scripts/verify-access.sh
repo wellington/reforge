@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITLAB_URL="https://gitlab.mgmt.procoregov-qa.internal"
-GITLAB_PROJECT="poc%2Fconfigurations"
-
 echo "=== Verifying access to required services ==="
 
-# --- GitLab token ---
-if [[ -n "${REFORGE_TOKEN:-}" ]]; then
-    GITLAB_TOKEN="$REFORGE_TOKEN"
-elif [[ -f "$HOME/.git-credentials" ]]; then
-    GITLAB_TOKEN=$(grep "gitlab.mgmt.procoregov-qa.internal" "$HOME/.git-credentials" \
-        | head -1 \
-        | sed 's|.*://[^:]*:\([^@]*\)@.*|\1|')
-fi
-
-if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-    echo "FAIL: No GitLab token found. Set REFORGE_TOKEN or add credentials to ~/.git-credentials"
+# --- Required environment variables ---
+if [[ -z "${REFORGE_TOKEN:-}" ]]; then
+    echo "FAIL: REFORGE_TOKEN is not set"
     exit 1
 fi
-export REFORGE_TOKEN="$GITLAB_TOKEN"
+
+if [[ -z "${REFORGE_GITLAB_URL:-}" ]]; then
+    echo "FAIL: REFORGE_GITLAB_URL is not set"
+    exit 1
+fi
+
+if [[ -z "${REFORGE_GITLAB_PROJECT:-}" ]]; then
+    echo "FAIL: REFORGE_GITLAB_PROJECT is not set (e.g., 'my-group/my-project')"
+    exit 1
+fi
+
+GITLAB_URL="$REFORGE_GITLAB_URL"
+GITLAB_TOKEN="$REFORGE_TOKEN"
+GITLAB_PROJECT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$REFORGE_GITLAB_PROJECT', safe=''))")
 
 echo -n "GitLab API (read)... "
 HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
@@ -45,25 +47,24 @@ else
     exit 1
 fi
 
-# --- Artifactory ---
-if [[ -z "${ARTIFACTORY_API_KEY:-}" ]]; then
-    echo "FAIL: ARTIFACTORY_API_KEY is not set"
-    exit 1
-fi
+# --- Optional: OCI registry check ---
+if [[ -n "${REGISTRY_API_KEY:-}" && -n "${REGISTRY_URL:-}" ]]; then
+    echo -n "OCI registry ($REGISTRY_URL)... "
+    HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer $REGISTRY_API_KEY" \
+        "$REGISTRY_URL/v2/")
 
-echo -n "Artifactory OCI registry... "
-HTTP_CODE=$(curl -sk -o /dev/null -w "%{http_code}" \
-    -H "Authorization: Bearer $ARTIFACTORY_API_KEY" \
-    "https://oci-charts.artifacts.procoretech.com/v2/")
-
-if [[ "$HTTP_CODE" == "200" ]]; then
-    echo "OK ($HTTP_CODE)"
-elif [[ "$HTTP_CODE" == "401" ]]; then
-    echo "FAIL: Authentication rejected (HTTP 401). Check ARTIFACTORY_API_KEY."
-    exit 1
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        echo "OK ($HTTP_CODE)"
+    elif [[ "$HTTP_CODE" == "401" ]]; then
+        echo "FAIL: Authentication rejected (HTTP 401). Check REGISTRY_API_KEY."
+        exit 1
+    else
+        echo "FAIL (HTTP $HTTP_CODE)"
+        exit 1
+    fi
 else
-    echo "FAIL (HTTP $HTTP_CODE)"
-    exit 1
+    echo "Skipping OCI registry check (REGISTRY_API_KEY or REGISTRY_URL not set)"
 fi
 
 echo "=== All access checks passed ==="

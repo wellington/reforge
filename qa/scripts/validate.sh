@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GITLAB_URL="https://gitlab.mgmt.procoregov-qa.internal"
-GITLAB_PROJECT="poc%2Fconfigurations"
 E2E_LABEL="reforge-e2e-test"
 PIPELINE_TIMEOUT=300  # seconds
 
-if [[ -n "${REFORGE_TOKEN:-}" ]]; then
-    TOKEN="$REFORGE_TOKEN"
-elif [[ -f "$HOME/.git-credentials" ]]; then
-    TOKEN=$(grep "gitlab.mgmt.procoregov-qa.internal" "$HOME/.git-credentials" \
-        | head -1 \
-        | sed 's|.*://[^:]*:\([^@]*\)@.*|\1|')
-fi
-
-if [[ -z "${TOKEN:-}" ]]; then
-    echo "FAIL: No GitLab token. Set REFORGE_TOKEN or configure ~/.git-credentials"
+if [[ -z "${REFORGE_TOKEN:-}" ]]; then
+    echo "FAIL: REFORGE_TOKEN is not set"
     exit 1
 fi
+
+if [[ -z "${REFORGE_GITLAB_URL:-}" ]]; then
+    echo "FAIL: REFORGE_GITLAB_URL is not set"
+    exit 1
+fi
+
+if [[ -z "${REFORGE_GITLAB_PROJECT:-}" ]]; then
+    echo "FAIL: REFORGE_GITLAB_PROJECT is not set (e.g., 'my-group/my-project')"
+    exit 1
+fi
+
+GITLAB_URL="$REFORGE_GITLAB_URL"
+TOKEN="$REFORGE_TOKEN"
+GITLAB_PROJECT=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$REFORGE_GITLAB_PROJECT', safe=''))")
 
 echo "=== Validating e2e test results ==="
 
@@ -30,7 +34,7 @@ MR_COUNT=$(echo "$MRS" | python3 -c "import sys,json; print(len(json.load(sys.st
 if [[ "$MR_COUNT" == "0" ]]; then
     echo "WARN: No MRs found with label '$E2E_LABEL'."
     echo "This may mean all dependencies are already up to date."
-    echo "Check the Dependency Dashboard issue in poc/configurations for confirmation."
+    echo "Check the Dependency Dashboard issue for confirmation."
     exit 1
 fi
 
