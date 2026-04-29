@@ -1,3 +1,11 @@
+//! Dependency dashboard rendering and persistence.
+//!
+//! The dashboard is an issue (GitLab) or markdown file (local mode) that
+//! summarizes all tracked dependencies and their update status:
+//! - **Pending Updates**: new versions available, MR not yet created
+//! - **Open MRs**: updates with existing merge requests
+//! - **Up to Date**: dependencies at their latest allowed version
+
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -6,6 +14,7 @@ use crate::manager::{Dependency, RegistrySource};
 use crate::platform::gitlab::{GitLabClient, Issue, MergeRequest};
 use crate::orchestrator::UpdateCandidate;
 
+/// Title used for the GitLab dashboard issue.
 pub const DASHBOARD_TITLE: &str = "Dependency Dashboard";
 const DASHBOARD_MARKER: &str = "<!-- reforge-dashboard -->";
 

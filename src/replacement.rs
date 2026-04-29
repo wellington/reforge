@@ -1,10 +1,20 @@
+//! Dependency replacement and deprecation detection.
+//!
+//! Some dependencies are renamed, moved to new registries, or deprecated
+//! entirely. This module maintains a database of replacement rules and
+//! creates migration MRs when matches are found.
+//!
+//! Built-in rules cover common cases like:
+//! - `gcr.io/google-containers/*` → `registry.k8s.io/*`
+//! - `docker.io/library/nginx` → `docker.io/nginxinc/nginx-unprivileged`
+//! - Deprecated etcd v2 images
+
 use serde::Deserialize;
 
 use crate::error::{ReforgeError, Result};
 use crate::manager::Dependency;
 
-/// A rule describing that one image/chart name should be replaced by another,
-/// or that a name is deprecated with no known replacement.
+/// A rule for replacing or deprecating a dependency.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReplacementRule {
     /// The old image/chart name (may contain a `*` glob wildcard).

@@ -1,3 +1,10 @@
+//! MR creation scheduling and rate limiting.
+//!
+//! Controls when and how many MRs reforge creates:
+//! - **Rate limiting**: caps the number of concurrently open MRs
+//! - **Schedule windows**: restricts MR creation to certain days/hours
+//! - **Priority ordering**: security fixes first, then major/minor/patch
+
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use std::collections::HashSet;
 

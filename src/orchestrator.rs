@@ -199,7 +199,7 @@ impl Orchestrator {
             return Ok(());
         }
 
-        let gitlab = self
+        let _gitlab = self
             .gitlab
             .as_ref()
             .ok_or_else(|| crate::error::ReforgeError::Config("GitLab client required in API mode".into()))?;
