@@ -26,6 +26,8 @@ pub enum PinStrategy {
     SemverMinor,
     /// Allow any update including major versions (e.g., 1.2.3 → 2.0.0).
     SemverMajor,
+    /// Allows for prerelease updates (e.g. 1.2.3 -> 2.0.0-alpha.1)
+    SemverAny
 }
 
 /// Evaluates available versions against a pinning strategy.
@@ -50,7 +52,6 @@ impl VersionPolicy {
             .iter()
             .filter(|v| {
                 v.version > *current
-                    && v.version.pre.is_empty()
                     && self.matches_strategy(current, &v.version)
             })
             .collect();
@@ -62,10 +63,15 @@ impl VersionPolicy {
     fn matches_strategy(&self, current: &Version, candidate: &Version) -> bool {
         match self.strategy {
             PinStrategy::SemverPatch => {
-                candidate.major == current.major && candidate.minor == current.minor
+                candidate.major == current.major 
+                    && candidate.minor == current.minor
+                    && candidate.pre.is_empty()
             }
-            PinStrategy::SemverMinor => candidate.major == current.major,
-            PinStrategy::SemverMajor => true,
+            PinStrategy::SemverMinor => {
+                candidate.major == current.major && candidate.pre.is_empty()
+            },
+            PinStrategy::SemverMajor => candidate.pre.is_empty(),
+            PinStrategy::SemverAny => true
         }
     }
 }
@@ -141,5 +147,38 @@ mod tests {
 
         let best = policy.best_update(&current, &available_with_pre).unwrap();
         assert_eq!(best.version, Version::parse("1.25.1").unwrap());
+    }
+
+    #[test]
+    fn test_selects_prerelease_policy() {
+        let policy = VersionPolicy::new(PinStrategy::SemverAny);
+        let current = Version::parse("1.25.0").unwrap();
+        let available = vec![
+            VersionInfo {
+                version: Version::parse("1.26.0-beta.1").unwrap(),
+                original_tag: "1.26.0-beta.1".to_string(),
+            },
+            vi("1.25.1")
+        ];
+        let best = policy.best_update(&current, &available).unwrap();
+        assert_eq!(best.version, Version::parse("1.26.0-beta.1").unwrap());
+    }
+
+    #[test]
+    fn test_selects_newest_prerelease() {
+        let policy = VersionPolicy::new(PinStrategy::SemverAny);
+        let current = Version::parse("1.25.0").unwrap();
+        let available = vec![
+            VersionInfo {
+                version: Version::parse("1.26.0-beta.1").unwrap(),
+                original_tag: "1.26.0-beta.1".to_string(),
+            },
+            VersionInfo {
+                version: Version::parse("1.26.0-beta.2").unwrap(),
+                original_tag: "1.26.0-beta.2".to_string(),
+            }
+        ];
+        let best = policy.best_update(&current, &available).unwrap();
+        assert_eq!(best.version, Version::parse("1.26.0-beta.2").unwrap());
     }
 }

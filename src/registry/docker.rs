@@ -39,7 +39,7 @@ impl DockerRegistryClient {
     }
 
     fn resolve_registry_url(
-        registry: &Option<String>,
+        registry: Option<&str>,
         credentials: &HashMap<String, RegistryCredential>,
     ) -> (String, String) {
         match registry {
@@ -67,7 +67,7 @@ impl DockerRegistryClient {
         }
     }
 
-    fn resolve_image_name(image: &str, registry: &Option<String>) -> String {
+    fn resolve_image_name(image: &str, registry: Option<&str>) -> String {
         if registry.is_none() && !image.contains('/') {
             format!("library/{}", image)
         } else if let Some(reg) = registry {
@@ -76,7 +76,7 @@ impl DockerRegistryClient {
                 image.strip_prefix(host).unwrap_or(image).trim_start_matches('/').to_string()
             } else {
                 if reg.contains('/') {
-                    let path = reg.splitn(2, '/').nth(1).unwrap_or("");
+                    let path = reg.split_once('/').map(|x| x.1).unwrap_or("");
                     if path.is_empty() {
                         image.to_string()
                     } else {
@@ -248,8 +248,8 @@ impl RegistryClient for DockerRegistryClient {
             }
         };
 
-        let (registry_url, registry_host) = Self::resolve_registry_url(&registry, &self.credentials);
-        let image_name = Self::resolve_image_name(&image, &registry);
+        let (registry_url, registry_host) = Self::resolve_registry_url(registry.as_deref(), &self.credentials);
+        let image_name = Self::resolve_image_name(&image, registry.as_deref());
 
         debug!(
             "Fetching versions for {} from {}",

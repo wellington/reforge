@@ -446,7 +446,7 @@ impl Orchestrator {
             let candidate = &group.candidates[0];
             let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
             let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().map_or(false, |ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            let policy_automerge = update_type.as_ref().is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
             if self.config.merge_request.auto_merge || policy_automerge {
                 info!("Automerge would be applied for {} ({:?}) [local mode]", candidate.dependency.name, update_type);
             }
@@ -716,7 +716,7 @@ impl Orchestrator {
             let candidate = &group.candidates[0];
             let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
             let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().map_or(false, |ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            let policy_automerge = update_type.as_ref().is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
             self.config.merge_request.auto_merge || policy_automerge
         } else {
             self.config.merge_request.auto_merge
