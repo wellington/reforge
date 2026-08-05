@@ -90,7 +90,7 @@ impl Orchestrator {
             docker: DockerRegistryClient::new(config.registries.clone())?,
             helm: HelmRegistryClient::new(config.registries.clone())?,
             http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60))
+                .timeout(std::time::Duration::from_mins(1))
                 .build()?,
         };
 
@@ -446,7 +446,7 @@ impl Orchestrator {
             let candidate = &group.candidates[0];
             let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
             let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().map_or(false, |ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            let policy_automerge = update_type.as_ref().is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
             if self.config.merge_request.auto_merge || policy_automerge {
                 info!("Automerge would be applied for {} ({:?}) [local mode]", candidate.dependency.name, update_type);
             }
@@ -599,15 +599,12 @@ impl Orchestrator {
         dep: Dependency,
         file_content: String,
     ) -> Result<Option<UpdateCandidate>> {
-        let current = match parse_version_lenient(&dep.current_version) {
-            Some(v) => v,
-            None => {
-                debug!(
-                    "Cannot parse version '{}' for {}, skipping",
-                    dep.current_version, dep.name
-                );
-                return Ok(None);
-            }
+        let current = if let Some(v) = parse_version_lenient(&dep.current_version) { v } else {
+            debug!(
+                "Cannot parse version '{}' for {}, skipping",
+                dep.current_version, dep.name
+            );
+            return Ok(None);
         };
 
         let versions = match &dep.registry {
@@ -622,22 +619,19 @@ impl Orchestrator {
             }
         };
 
-        match self.version_policy.best_update(&current, &versions) {
-            Some(new_version) => {
-                info!(
-                    "Update available: {} {} -> {}",
-                    dep.name, dep.current_version, new_version.original_tag
-                );
-                Ok(Some(UpdateCandidate {
-                    dependency: dep,
-                    new_version,
-                    file_content,
-                }))
-            }
-            None => {
-                debug!("{} is up to date at {}", dep.name, dep.current_version);
-                Ok(None)
-            }
+        if let Some(new_version) = self.version_policy.best_update(&current, &versions) {
+            info!(
+                "Update available: {} {} -> {}",
+                dep.name, dep.current_version, new_version.original_tag
+            );
+            Ok(Some(UpdateCandidate {
+                dependency: dep,
+                new_version,
+                file_content,
+            }))
+        } else {
+            debug!("{} is up to date at {}", dep.name, dep.current_version);
+            Ok(None)
         }
     }
 
@@ -704,7 +698,7 @@ impl Orchestrator {
             let c = file_candidates[0];
             format!("chore(deps): update {} from {} to {}", c.dependency.name, c.dependency.current_version, c.new_version.original_tag)
         } else {
-            format!("chore(deps): grouped update for '{}'", group_name)
+            format!("chore(deps): grouped update for '{group_name}'")
         };
         source.commit_file(branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await?;
         self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name).await;
@@ -716,7 +710,7 @@ impl Orchestrator {
             let candidate = &group.candidates[0];
             let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
             let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().map_or(false, |ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            let policy_automerge = update_type.as_ref().is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
             self.config.merge_request.auto_merge || policy_automerge
         } else {
             self.config.merge_request.auto_merge
@@ -766,10 +760,10 @@ impl Orchestrator {
             _ => String::new(),
         };
 
-        let vuln_section = if !vulns.is_empty() {
-            format!("\n\n{}", render_vulnerability_section(vulns))
-        } else {
+        let vuln_section = if vulns.is_empty() {
             String::new()
+        } else {
+            format!("\n\n{}", render_vulnerability_section(vulns))
         };
 
         let body = format!(
@@ -802,11 +796,11 @@ impl Orchestrator {
         let registry_source_str = match &candidate.dependency.registry {
             RegistrySource::DockerRegistry { image, .. } => image.clone(),
             RegistrySource::HelmRepository { repo_url, chart_name, .. } => {
-                format!("{}/{}", repo_url, chart_name)
+                format!("{repo_url}/{chart_name}")
             }
             RegistrySource::OciHelmRegistry { registry, image } => {
                 match registry {
-                    Some(r) => format!("{}/{}", r, image),
+                    Some(r) => format!("{r}/{image}"),
                     None => image.clone(),
                 }
             }
@@ -869,7 +863,7 @@ impl Orchestrator {
         if *strategy == StaleMrStrategy::Ignore { return; }
 
         let prefix = &self.config.merge_request.branch_prefix;
-        let branches: Vec<String> = match repo.run(&["branch", "--list", &format!("{}*", prefix)]).await {
+        let branches: Vec<String> = match repo.run(&["branch", "--list", &format!("{prefix}*")]).await {
             Ok(out) => out.lines().map(|l: &str| l.trim().trim_start_matches("* ").to_string()).filter(|b: &String| !b.is_empty()).collect(),
             Err(e) => { warn!("Failed to list local reforge branches: {}", e); return; }
         };
@@ -917,12 +911,12 @@ impl Orchestrator {
         info!("[replacement] Creating migration MR: {} → {} ({})", from_ref, to_ref, file_path);
         let file_content = all_deps.iter()
             .find(|(d, _)| d.name == dep_name && d.file_path == file_path)
-            .map(|(_, c)| c.as_str()).unwrap_or("");
+            .map_or("", |(_, c)| c.as_str());
 
         let Some((branch_name, default_branch)) = self.commit_replacement_files(source, dep_name, file_path, from_ref, to_ref, file_content).await else { return };
 
         let mr_body = render_replacement_mr_body(action);
-        let mr_title = format!("chore(deps): migrate {} to {}", dep_name, to_ref);
+        let mr_title = format!("chore(deps): migrate {dep_name} to {to_ref}");
 
         if let Some(gitlab) = &self.gitlab {
             let mut labels = self.config.merge_request.labels.clone();
@@ -944,7 +938,7 @@ impl Orchestrator {
         }
     }
 
-    /// Creates a replacement branch and commits the migration. Returns (branch_name, default_branch)
+    /// Creates a replacement branch and commits the migration. Returns (`branch_name`, `default_branch`)
     /// on success, or `None` if the branch already exists or an error occurs.
     async fn commit_replacement_files(
         &self,
@@ -976,7 +970,7 @@ impl Orchestrator {
             warn!("[replacement] Failed to create branch {}: {}", branch_name, e); return None;
         }
         let file_update = updater::apply_replacement(file_content, file_path, from_ref, to_ref);
-        let commit_msg = format!("chore(deps): migrate {} from {} to {}", dep_name, from_ref, to_ref);
+        let commit_msg = format!("chore(deps): migrate {dep_name} from {from_ref} to {to_ref}");
         if let Err(e) = source.commit_file(&branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await {
             warn!("[replacement] Failed to commit migration for {}: {}", dep_name, e); return None;
         }
@@ -1026,7 +1020,7 @@ impl Orchestrator {
         let idx = self
             .scanner.managers
             .iter()
-            .position(|m| std::ptr::eq(m.as_ref() as *const _, manager as *const _))
+            .position(|m| std::ptr::eq(std::ptr::from_ref(m.as_ref()), std::ptr::from_ref(manager)))
             .unwrap_or(usize::MAX);
         self.file_matches_manager_at(path, manager, idx)
     }
@@ -1078,7 +1072,7 @@ impl Orchestrator {
 
     /// Deduplicate update candidates when the same dependency+version pair is
     /// detected from multiple managers/files. Keeps only the first occurrence
-    /// per (name, new_version) key and logs duplicates that are merged.
+    /// per (name, `new_version`) key and logs duplicates that are merged.
     fn deduplicate_candidates(candidates: Vec<UpdateCandidate>) -> Vec<UpdateCandidate> {
         let mut seen: HashSet<(String, String, String)> = HashSet::new();
         let mut deduped: Vec<UpdateCandidate> = Vec::with_capacity(candidates.len());

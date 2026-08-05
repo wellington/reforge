@@ -194,9 +194,9 @@ impl GitLabClient {
             }
         }
 
-        Err(last_err.map(ReforgeError::Http).unwrap_or_else(|| {
+        Err(last_err.map_or_else(|| {
             ReforgeError::Config("Max retries exceeded".into())
-        }))
+        }, ReforgeError::Http))
     }
 
     pub async fn get_default_branch(&self, project: &str) -> Result<String> {
@@ -235,7 +235,7 @@ impl GitLabClient {
                 page,
             );
             if let Some(p) = path {
-                url.push_str(&format!("&path={}", p));
+                url.push_str(&format!("&path={p}"));
             }
             if recursive {
                 url.push_str("&recursive=true");
@@ -287,11 +287,11 @@ impl GitLabClient {
                 .decode(file_resp.content.replace('\n', ""))
                 .map_err(|e| ReforgeError::Parse {
                     file: path.to_string(),
-                    reason: format!("Base64 decode failed: {}", e),
+                    reason: format!("Base64 decode failed: {e}"),
                 })?;
             String::from_utf8(decoded).map_err(|e| ReforgeError::Parse {
                 file: path.to_string(),
-                reason: format!("UTF-8 decode failed: {}", e),
+                reason: format!("UTF-8 decode failed: {e}"),
             })
         } else {
             Ok(file_resp.content)
@@ -550,7 +550,7 @@ impl GitLabClient {
         Ok(())
     }
 
-    /// Fetch the detailed view of a single MR (includes has_conflicts and diverged_commits_count).
+    /// Fetch the detailed view of a single MR (includes `has_conflicts` and `diverged_commits_count`).
     pub async fn get_mr_detail(&self, project: &str, mr_iid: u64) -> Result<MrDetail> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}",
@@ -565,7 +565,7 @@ impl GitLabClient {
     }
 
     /// Trigger a GitLab-side rebase of the MR's source branch onto its target branch.
-    /// Uses PUT /projects/:id/merge_requests/:iid/rebase
+    /// Uses PUT /`projects/:id/merge_requests/:iid/rebase`
     pub async fn rebase_mr(&self, project: &str, mr_iid: u64) -> Result<()> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/rebase",
@@ -603,7 +603,7 @@ impl GitLabClient {
                 page,
             );
             if let Some(s) = state {
-                url.push_str(&format!("&state={}", s));
+                url.push_str(&format!("&state={s}"));
             }
             if let Some(title) = search_title {
                 url.push_str(&format!("&search={}", urlencoding::encode(title)));
@@ -706,7 +706,7 @@ mod urlencoding {
                     result.push(byte as char);
                 }
                 _ => {
-                    result.push_str(&format!("%{:02X}", byte));
+                    result.push_str(&format!("%{byte:02X}"));
                 }
             }
         }

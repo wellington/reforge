@@ -85,28 +85,25 @@ pub fn group_candidates(
     }
 
     // Handle unmatched candidates.
-    match default_grouping {
-        "grouped" => {
-            if !unmatched.is_empty() {
-                groups.push(Group {
-                    name: "all".to_string(),
-                    candidates: unmatched,
-                });
-            }
+    if default_grouping == "grouped" {
+        if !unmatched.is_empty() {
+            groups.push(Group {
+                name: "all".to_string(),
+                candidates: unmatched,
+            });
         }
-        _ => {
-            let mut per_dep: HashMap<String, usize> = HashMap::new();
-            for candidate in unmatched {
-                let manager = manager_name(&candidate.dependency.registry);
-                let sanitized = candidate.dependency.name.replace('/', "-");
-                let name = format!("{}-{}", manager, sanitized);
-                if let Some(&idx) = per_dep.get(&name) {
-                    groups[idx].candidates.push(candidate);
-                } else {
-                    let idx = groups.len();
-                    per_dep.insert(name.clone(), idx);
-                    groups.push(Group { name, candidates: vec![candidate] });
-                }
+    } else {
+        let mut per_dep: HashMap<String, usize> = HashMap::new();
+        for candidate in unmatched {
+            let manager = manager_name(&candidate.dependency.registry);
+            let sanitized = candidate.dependency.name.replace('/', "-");
+            let name = format!("{manager}-{sanitized}");
+            if let Some(&idx) = per_dep.get(&name) {
+                groups[idx].candidates.push(candidate);
+            } else {
+                let idx = groups.len();
+                per_dep.insert(name.clone(), idx);
+                groups.push(Group { name, candidates: vec![candidate] });
             }
         }
     }

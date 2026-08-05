@@ -416,7 +416,7 @@ pub struct ChangelogConfig {
     /// Maximum number of characters to include before truncating.
     #[serde(default = "default_changelog_max_length")]
     pub max_length: usize,
-    /// GitHub personal access token for the releases API (loaded from GITHUB_TOKEN env).
+    /// GitHub personal access token for the releases API (loaded from `GITHUB_TOKEN` env).
     #[serde(skip)]
     pub github_token: Option<String>,
 }
@@ -493,11 +493,11 @@ impl RegistryCredential {
 impl Config {
     pub fn load(path: &Path, cli_overrides: CliOverrides) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(|e| {
-            ReforgeError::Config(format!("Failed to read config file {:?}: {}", path, e))
+            ReforgeError::Config(format!("Failed to read config file {path:?}: {e}"))
         })?;
 
         let mut config: Config = toml::from_str(&contents)
-            .map_err(|e| ReforgeError::Config(format!("Invalid config: {}", e)))?;
+            .map_err(|e| ReforgeError::Config(format!("Invalid config: {e}")))?;
 
         // Populate changelog token from env (field is skipped during deserialization).
         if config.changelog.github_token.is_none() {

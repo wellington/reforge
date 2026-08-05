@@ -125,15 +125,15 @@ fn update_yaml_value(content: &str, old_version: &str, new_version: &str) -> Str
     //   tag: "1.25.3"    or    tag: 1.25.3
     //   version: "1.25.3" or   version: 1.25.3
     let patterns = [
-        format!(": \"{}\"", old_version),
-        format!(": '{}'", old_version),
-        format!(": {}", old_version),
+        format!(": \"{old_version}\""),
+        format!(": '{old_version}'"),
+        format!(": {old_version}"),
     ];
 
     let replacements = [
-        format!(": \"{}\"", new_version),
-        format!(": '{}'", new_version),
-        format!(": {}", new_version),
+        format!(": \"{new_version}\""),
+        format!(": '{new_version}'"),
+        format!(": {new_version}"),
     ];
 
     let mut result = content.to_string();

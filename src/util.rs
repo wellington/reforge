@@ -46,7 +46,7 @@ fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
                 // `*` — consume any number of characters except '/'
                 let rest = &pattern[1..];
                 for i in 0..=text.len() {
-                    if text[..i].iter().any(|&c| c == '/') {
+                    if text[..i].contains(&'/') {
                         break;
                     }
                     if glob_match_inner(rest, &text[i..]) {

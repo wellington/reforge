@@ -42,49 +42,44 @@ impl DockerRegistryClient {
         registry: &Option<String>,
         credentials: &HashMap<String, RegistryCredential>,
     ) -> (String, String) {
-        match registry {
-            Some(reg) => {
-                let host = reg.split('/').next().unwrap_or(reg);
-                if let Some(cred) = credentials.get(host) {
-                    if let Some(base_url) = &cred.base_url {
-                        return (base_url.trim_end_matches('/').to_string(), host.to_string());
-                    }
+        if let Some(reg) = registry {
+            let host = reg.split('/').next().unwrap_or(reg);
+            if let Some(cred) = credentials.get(host) {
+                if let Some(base_url) = &cred.base_url {
+                    return (base_url.trim_end_matches('/').to_string(), host.to_string());
                 }
-                (format!("https://{}", host), host.to_string())
             }
-            None => {
-                let default_host = "registry-1.docker.io";
-                if let Some(cred) = credentials.get(default_host) {
-                    if let Some(base_url) = &cred.base_url {
-                        return (base_url.trim_end_matches('/').to_string(), default_host.to_string());
-                    }
+            (format!("https://{host}"), host.to_string())
+        } else {
+            let default_host = "registry-1.docker.io";
+            if let Some(cred) = credentials.get(default_host) {
+                if let Some(base_url) = &cred.base_url {
+                    return (base_url.trim_end_matches('/').to_string(), default_host.to_string());
                 }
-                (
-                    format!("https://{}", default_host),
-                    default_host.to_string(),
-                )
             }
+            (
+                format!("https://{default_host}"),
+                default_host.to_string(),
+            )
         }
     }
 
     fn resolve_image_name(image: &str, registry: &Option<String>) -> String {
         if registry.is_none() && !image.contains('/') {
-            format!("library/{}", image)
+            format!("library/{image}")
         } else if let Some(reg) = registry {
             let host = reg.split('/').next().unwrap_or(reg);
             if image.starts_with(host) {
                 image.strip_prefix(host).unwrap_or(image).trim_start_matches('/').to_string()
-            } else {
-                if reg.contains('/') {
-                    let path = reg.splitn(2, '/').nth(1).unwrap_or("");
-                    if path.is_empty() {
-                        image.to_string()
-                    } else {
-                        format!("{}/{}", path, image)
-                    }
-                } else {
+            } else if reg.contains('/') {
+                let path = reg.split_once('/').map_or("", |x| x.1);
+                if path.is_empty() {
                     image.to_string()
+                } else {
+                    format!("{path}/{image}")
                 }
+            } else {
+                image.to_string()
             }
         } else {
             image.to_string()
@@ -107,10 +102,10 @@ impl DockerRegistryClient {
         let mut url = realm.clone();
         let mut query_parts = Vec::new();
         if let Some(service) = params.get("service") {
-            query_parts.push(format!("service={}", service));
+            query_parts.push(format!("service={service}"));
         }
         if let Some(scope) = params.get("scope") {
-            query_parts.push(format!("scope={}", scope));
+            query_parts.push(format!("scope={scope}"));
         }
         if !query_parts.is_empty() {
             url = format!("{}?{}", url, query_parts.join("&"));
@@ -123,14 +118,14 @@ impl DockerRegistryClient {
                 (&cred.username, cred.resolve_password())
             {
                 let encoded = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{}:{}", username, password));
-                req = req.header(AUTHORIZATION, format!("Basic {}", encoded));
+                    .encode(format!("{username}:{password}"));
+                req = req.header(AUTHORIZATION, format!("Basic {encoded}"));
             }
         }
 
         let resp = req.send().await.map_err(|e| ReforgeError::Registry {
             registry: registry_host.to_string(),
-            message: format!("Token request failed: {}", e),
+            message: format!("Token request failed: {e}"),
         })?;
 
         if !resp.status().is_success() {
@@ -143,7 +138,7 @@ impl DockerRegistryClient {
         let token_resp: TokenResponse = resp.json().await.map_err(|e| {
             ReforgeError::Registry {
                 registry: registry_host.to_string(),
-                message: format!("Failed to parse token response: {}", e),
+                message: format!("Failed to parse token response: {e}"),
             }
         })?;
 
@@ -162,7 +157,7 @@ impl DockerRegistryClient {
         registry_host: &str,
         image_name: &str,
     ) -> Result<Vec<String>> {
-        let tags_url = format!("{}/v2/{}/tags/list", registry_url, image_name);
+        let tags_url = format!("{registry_url}/v2/{image_name}/tags/list");
         debug!("Fetching tags from {}", tags_url);
 
         let mut req = self.client.get(&tags_url);
@@ -173,7 +168,7 @@ impl DockerRegistryClient {
         if let Some(cred) = self.credentials.get(registry_host) {
             if cred.username.is_none() {
                 if let Some(password) = cred.resolve_password() {
-                    req = req.header(AUTHORIZATION, format!("Bearer {}", password));
+                    req = req.header(AUTHORIZATION, format!("Bearer {password}"));
                 }
             }
         }
@@ -197,7 +192,7 @@ impl DockerRegistryClient {
                 let resp = self
                     .client
                     .get(&url)
-                    .header(AUTHORIZATION, format!("Bearer {}", token))
+                    .header(AUTHORIZATION, format!("Bearer {token}"))
                     .send()
                     .await?;
 
@@ -306,9 +301,8 @@ fn parse_link_next(header: &str, base_url: &str) -> Option<String> {
                     let url = &part[start + 1..end];
                     if url.starts_with("http") {
                         return Some(url.to_string());
-                    } else {
-                        return Some(format!("{}{}", base_url, url));
                     }
+                    return Some(format!("{base_url}{url}"));
                 }
             }
         }

@@ -44,11 +44,11 @@ struct Cli {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// GitLab API token (prefer env: REFORGE_TOKEN)
+    /// GitLab API token (prefer env: `REFORGE_TOKEN`)
     #[arg(long, env = "REFORGE_TOKEN")]
     token: Option<String>,
 
-    /// GitLab instance URL (prefer env: REFORGE_GITLAB_URL)
+    /// GitLab instance URL (prefer env: `REFORGE_GITLAB_URL`)
     #[arg(long, env = "REFORGE_GITLAB_URL")]
     gitlab_url: Option<String>,
 

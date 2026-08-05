@@ -31,7 +31,7 @@ impl ChangelogFetcher {
         }
     }
 
-    /// Fetch release notes from GitHub Releases API for versions between from_version and to_version.
+    /// Fetch release notes from GitHub Releases API for versions between `from_version` and `to_version`.
     pub async fn fetch_github_release_notes(
         &self,
         owner: &str,
@@ -40,8 +40,7 @@ impl ChangelogFetcher {
         to_version: &str,
     ) -> Option<String> {
         let url = format!(
-            "https://api.github.com/repos/{}/{}/releases",
-            owner, repo
+            "https://api.github.com/repos/{owner}/{repo}/releases"
         );
 
         let mut req = self
@@ -51,7 +50,7 @@ impl ChangelogFetcher {
             .header("Accept", "application/vnd.github+json");
 
         if let Some(token) = &self.github_token {
-            req = req.header("Authorization", format!("Bearer {}", token));
+            req = req.header("Authorization", format!("Bearer {token}"));
         }
 
         let response = match req.send().await {
@@ -118,7 +117,7 @@ impl ChangelogFetcher {
             .header("User-Agent", "reforge/0.1");
 
         if let Some(token) = &self.github_token {
-            req = req.header("Authorization", format!("Bearer {}", token));
+            req = req.header("Authorization", format!("Bearer {token}"));
         }
 
         let response = match req.send().await {
@@ -158,12 +157,9 @@ impl ChangelogFetcher {
         to_version: &str,
     ) -> Option<String> {
         // Try to extract owner/repo from the registry source or dep name.
-        let (owner, repo) = match extract_github_owner_repo(dep_name, registry_source) {
-            Some(pair) => pair,
-            None => {
-                debug!("Cannot determine GitHub owner/repo for {}", dep_name);
-                return None;
-            }
+        let (owner, repo) = if let Some(pair) = extract_github_owner_repo(dep_name, registry_source) { pair } else {
+            debug!("Cannot determine GitHub owner/repo for {}", dep_name);
+            return None;
         };
 
         debug!(
@@ -183,13 +179,13 @@ impl ChangelogFetcher {
             owner, repo
         );
 
-        let repo_url = format!("https://github.com/{}/{}", owner, repo);
+        let repo_url = format!("https://github.com/{owner}/{repo}");
         self.fetch_changelog_md(&repo_url, from_version, to_version)
             .await
     }
 }
 
-/// Truncate changelog text to max_length characters, appending a note if truncated.
+/// Truncate changelog text to `max_length` characters, appending a note if truncated.
 pub fn truncate_changelog(text: &str, max_length: usize) -> String {
     if text.len() <= max_length {
         return text.to_string();
@@ -198,18 +194,17 @@ pub fn truncate_changelog(text: &str, max_length: usize) -> String {
     // Try to cut at a word boundary.
     let cut = &text[..max_length];
     let truncated = cut.rfind('\n').map_or(cut, |i| &cut[..i]);
-    format!("{}\n\n... (truncated)", truncated)
+    format!("{truncated}\n\n... (truncated)")
 }
 
 /// Wrap changelog notes in a collapsible `<details>` block.
 pub fn render_changelog_section(notes: &str) -> String {
     format!(
-        "<details>\n<summary>Release Notes</summary>\n\n{}\n\n</details>",
-        notes
+        "<details>\n<summary>Release Notes</summary>\n\n{notes}\n\n</details>"
     )
 }
 
-/// Extract the relevant section(s) of a CHANGELOG.md between from_version and to_version.
+/// Extract the relevant section(s) of a CHANGELOG.md between `from_version` and `to_version`.
 pub fn extract_changelog_range(
     changelog: &str,
     from_version: &str,
@@ -320,8 +315,7 @@ fn github_raw_changelog_url(repo_url: &str) -> Option<String> {
         return None;
     }
     Some(format!(
-        "{}/raw/HEAD/CHANGELOG.md",
-        base
+        "{base}/raw/HEAD/CHANGELOG.md"
     ))
 }
 

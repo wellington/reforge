@@ -75,10 +75,10 @@ pub fn build_statuses(
             }
         };
 
-        let open_mr = if !branch_name.is_empty() {
-            mr_by_branch.get(branch_name.as_str()).copied()
-        } else {
+        let open_mr = if branch_name.is_empty() {
             None
+        } else {
+            mr_by_branch.get(branch_name.as_str()).copied()
         };
 
         let status = if let Some(mr) = open_mr {
@@ -142,8 +142,7 @@ pub fn render_dashboard(statuses: &[DependencyStatus], project_label: &str) -> S
     body.push_str(DASHBOARD_MARKER);
     body.push('\n');
     body.push_str(&format!(
-        "## Dependency Dashboard — {}\n\n",
-        project_label
+        "## Dependency Dashboard — {project_label}\n\n"
     ));
     body.push_str(
         "This issue lists all dependencies tracked by **reforge**. \
@@ -185,7 +184,7 @@ pub fn render_dashboard(statuses: &[DependencyStatus], project_label: &str) -> S
         for s in &open_mr {
             let new_ver = s.new_version.as_deref().unwrap_or("?");
             let mr_link = match (&s.mr_url, &s.mr_iid) {
-                (Some(url), Some(iid)) => format!("[!{}]({})", iid, url),
+                (Some(url), Some(iid)) => format!("[!{iid}]({url})"),
                 _ => "-".to_string(),
             };
             body.push_str(&format!(
@@ -249,7 +248,7 @@ pub async fn upsert_gitlab_dashboard(
 /// Write the dashboard to a local markdown file.
 pub fn write_local_dashboard(body: &str, path: &str) -> Result<()> {
     std::fs::write(path, body).map_err(|e| {
-        crate::error::ReforgeError::Config(format!("Failed to write dashboard to {}: {}", path, e))
+        crate::error::ReforgeError::Config(format!("Failed to write dashboard to {path}: {e}"))
     })?;
     debug!("Wrote dashboard to {}", path);
     Ok(())
