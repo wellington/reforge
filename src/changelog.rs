@@ -39,9 +39,7 @@ impl ChangelogFetcher {
         from_version: &str,
         to_version: &str,
     ) -> Option<String> {
-        let url = format!(
-            "https://api.github.com/repos/{owner}/{repo}/releases"
-        );
+        let url = format!("https://api.github.com/repos/{owner}/{repo}/releases");
 
         let mut req = self
             .client
@@ -56,7 +54,10 @@ impl ChangelogFetcher {
         let response = match req.send().await {
             Ok(r) => r,
             Err(e) => {
-                debug!("Failed to fetch GitHub releases for {}/{}: {}", owner, repo, e);
+                debug!(
+                    "Failed to fetch GitHub releases for {}/{}: {}",
+                    owner, repo, e
+                );
                 return None;
             }
         };
@@ -74,7 +75,10 @@ impl ChangelogFetcher {
         let releases: Vec<GitHubRelease> = match response.json().await {
             Ok(r) => r,
             Err(e) => {
-                debug!("Failed to parse GitHub releases for {}/{}: {}", owner, repo, e);
+                debug!(
+                    "Failed to parse GitHub releases for {}/{}: {}",
+                    owner, repo, e
+                );
                 return None;
             }
         };
@@ -89,9 +93,9 @@ impl ChangelogFetcher {
                 is_version_in_range(tag, from, to)
             })
             .filter_map(|r| {
-                r.body.filter(|b| !b.trim().is_empty()).map(|b| {
-                    format!("### {}\n\n{}", r.tag_name, b.trim())
-                })
+                r.body
+                    .filter(|b| !b.trim().is_empty())
+                    .map(|b| format!("### {}\n\n{}", r.tag_name, b.trim()))
             })
             .collect();
 
@@ -157,7 +161,10 @@ impl ChangelogFetcher {
         to_version: &str,
     ) -> Option<String> {
         // Try to extract owner/repo from the registry source or dep name.
-        let (owner, repo) = if let Some(pair) = extract_github_owner_repo(dep_name, registry_source) { pair } else {
+        let (owner, repo) = if let Some(pair) = extract_github_owner_repo(dep_name, registry_source)
+        {
+            pair
+        } else {
             debug!("Cannot determine GitHub owner/repo for {}", dep_name);
             return None;
         };
@@ -199,9 +206,7 @@ pub fn truncate_changelog(text: &str, max_length: usize) -> String {
 
 /// Wrap changelog notes in a collapsible `<details>` block.
 pub fn render_changelog_section(notes: &str) -> String {
-    format!(
-        "<details>\n<summary>Release Notes</summary>\n\n{notes}\n\n</details>"
-    )
+    format!("<details>\n<summary>Release Notes</summary>\n\n{notes}\n\n</details>")
 }
 
 /// Extract the relevant section(s) of a CHANGELOG.md between `from_version` and `to_version`.
@@ -308,15 +313,11 @@ fn parse_version_heading(line: &str) -> Option<&str> {
 /// Convert a GitHub HTML repo URL to a raw content URL for CHANGELOG.md.
 fn github_raw_changelog_url(repo_url: &str) -> Option<String> {
     // Accept https://github.com/owner/repo (with optional trailing slash / .git)
-    let base = repo_url
-        .trim_end_matches('/')
-        .trim_end_matches(".git");
+    let base = repo_url.trim_end_matches('/').trim_end_matches(".git");
     if !base.contains("github.com") {
         return None;
     }
-    Some(format!(
-        "{base}/raw/HEAD/CHANGELOG.md"
-    ))
+    Some(format!("{base}/raw/HEAD/CHANGELOG.md"))
 }
 
 /// Attempt to derive (owner, repo) from a dependency name or registry source string.
@@ -339,9 +340,7 @@ fn extract_github_owner_repo<'a>(
 }
 
 fn parse_github_url(s: &str) -> Option<(String, String)> {
-    let s = s
-        .trim_end_matches('/')
-        .trim_end_matches(".git");
+    let s = s.trim_end_matches('/').trim_end_matches(".git");
     // Expected shape: https://github.com/owner/repo[/...]
     let after_host = s.split("github.com/").nth(1)?;
     let mut parts = after_host.splitn(3, '/');
@@ -465,10 +464,7 @@ Initial release.
 
     #[test]
     fn test_extract_github_owner_repo_from_registry_source() {
-        let pair = extract_github_owner_repo(
-            "helm",
-            Some("https://github.com/helm/helm"),
-        );
+        let pair = extract_github_owner_repo("helm", Some("https://github.com/helm/helm"));
         assert_eq!(pair, Some(("helm".to_string(), "helm".to_string())));
     }
 

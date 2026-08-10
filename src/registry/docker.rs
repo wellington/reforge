@@ -54,13 +54,13 @@ impl DockerRegistryClient {
             let default_host = "registry-1.docker.io";
             if let Some(cred) = credentials.get(default_host) {
                 if let Some(base_url) = &cred.base_url {
-                    return (base_url.trim_end_matches('/').to_string(), default_host.to_string());
+                    return (
+                        base_url.trim_end_matches('/').to_string(),
+                        default_host.to_string(),
+                    );
                 }
             }
-            (
-                format!("https://{default_host}"),
-                default_host.to_string(),
-            )
+            (format!("https://{default_host}"), default_host.to_string())
         }
     }
 
@@ -70,7 +70,11 @@ impl DockerRegistryClient {
         } else if let Some(reg) = registry {
             let host = reg.split('/').next().unwrap_or(reg);
             if image.starts_with(host) {
-                image.strip_prefix(host).unwrap_or(image).trim_start_matches('/').to_string()
+                image
+                    .strip_prefix(host)
+                    .unwrap_or(image)
+                    .trim_start_matches('/')
+                    .to_string()
             } else if reg.contains('/') {
                 let path = reg.split_once('/').map_or("", |x| x.1);
                 if path.is_empty() {
@@ -86,17 +90,11 @@ impl DockerRegistryClient {
         }
     }
 
-    async fn authenticate(
-        &self,
-        www_authenticate: &str,
-        registry_host: &str,
-    ) -> Result<String> {
+    async fn authenticate(&self, www_authenticate: &str, registry_host: &str) -> Result<String> {
         let params = parse_www_authenticate(www_authenticate);
-        let realm = params.get("realm").ok_or_else(|| {
-            ReforgeError::Registry {
-                registry: registry_host.to_string(),
-                message: "Missing realm in WWW-Authenticate".to_string(),
-            }
+        let realm = params.get("realm").ok_or_else(|| ReforgeError::Registry {
+            registry: registry_host.to_string(),
+            message: "Missing realm in WWW-Authenticate".to_string(),
         })?;
 
         let mut url = realm.clone();
@@ -114,9 +112,7 @@ impl DockerRegistryClient {
         let mut req = self.client.get(&url);
 
         if let Some(cred) = self.credentials.get(registry_host) {
-            if let (Some(username), Some(password)) =
-                (&cred.username, cred.resolve_password())
-            {
+            if let (Some(username), Some(password)) = (&cred.username, cred.resolve_password()) {
                 let encoded = base64::engine::general_purpose::STANDARD
                     .encode(format!("{username}:{password}"));
                 req = req.header(AUTHORIZATION, format!("Basic {encoded}"));
@@ -135,11 +131,9 @@ impl DockerRegistryClient {
             });
         }
 
-        let token_resp: TokenResponse = resp.json().await.map_err(|e| {
-            ReforgeError::Registry {
-                registry: registry_host.to_string(),
-                message: format!("Failed to parse token response: {e}"),
-            }
+        let token_resp: TokenResponse = resp.json().await.map_err(|e| ReforgeError::Registry {
+            registry: registry_host.to_string(),
+            message: format!("Failed to parse token response: {e}"),
         })?;
 
         token_resp
@@ -243,13 +237,11 @@ impl RegistryClient for DockerRegistryClient {
             }
         };
 
-        let (registry_url, registry_host) = Self::resolve_registry_url(&registry, &self.credentials);
+        let (registry_url, registry_host) =
+            Self::resolve_registry_url(&registry, &self.credentials);
         let image_name = Self::resolve_image_name(&image, &registry);
 
-        debug!(
-            "Fetching versions for {} from {}",
-            image_name, registry_url
-        );
+        debug!("Fetching versions for {} from {}", image_name, registry_url);
 
         let tags = self
             .fetch_tags(&registry_url, &registry_host, &image_name)
@@ -282,10 +274,7 @@ fn parse_www_authenticate(header: &str) -> HashMap<String, String> {
         let part = part.trim();
         if let Some(eq_idx) = part.find('=') {
             let key = part[..eq_idx].trim().to_string();
-            let val = part[eq_idx + 1..]
-                .trim()
-                .trim_matches('"')
-                .to_string();
+            let val = part[eq_idx + 1..].trim().trim_matches('"').to_string();
             params.insert(key, val);
         }
     }

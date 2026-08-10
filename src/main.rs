@@ -26,7 +26,10 @@ use crate::config::CliOverrides;
 use crate::orchestrator::Orchestrator;
 
 #[derive(Parser, Debug)]
-#[command(name = "reforge", about = "Automated dependency updates for Helm charts and Dockerfiles")]
+#[command(
+    name = "reforge",
+    about = "Automated dependency updates for Helm charts and Dockerfiles"
+)]
 struct Cli {
     /// Path to config file
     #[arg(long, default_value = "reforge.toml")]
@@ -102,7 +105,10 @@ async fn main() -> anyhow::Result<()> {
     let config = if cli.config.exists() {
         config::Config::load(&cli.config, overrides)?
     } else {
-        info!("No config file found at {:?}, using CLI args and env vars", cli.config);
+        info!(
+            "No config file found at {:?}, using CLI args and env vars",
+            cli.config
+        );
         config::Config::from_cli(overrides)?
     };
 

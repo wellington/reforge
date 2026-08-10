@@ -71,7 +71,9 @@ impl<'a> AutomergeEvaluator<'a> {
             }
 
             if !policy.update_types.is_empty()
-                && !policy.update_types.contains(&update_type_to_filter(update_type))
+                && !policy
+                    .update_types
+                    .contains(&update_type_to_filter(update_type))
             {
                 continue;
             }
@@ -278,12 +280,7 @@ mod tests {
 
     #[test]
     fn automerge_wildcard_policy() {
-        let policies = vec![make_policy(
-            "*",
-            vec![UpdateTypeFilter::Patch],
-            true,
-            None,
-        )];
+        let policies = vec![make_policy("*", vec![UpdateTypeFilter::Patch], true, None)];
         let eval = AutomergeEvaluator::new(&policies);
 
         assert!(eval.should_automerge("nginx", &UpdateType::Patch, None));

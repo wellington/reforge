@@ -22,3 +22,6 @@ check:
 
 lint:
 	cargo clippy --fix --bin reforge -- -W clippy::pedantic
+
+fmt:
+	cargo fmt --all

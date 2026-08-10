@@ -93,9 +93,7 @@ impl FileSource for GitLabSource {
     }
 
     async fn create_branch(&self, branch: &str, base: &str) -> Result<()> {
-        self.client
-            .create_branch(&self.project, branch, base)
-            .await
+        self.client.create_branch(&self.project, branch, base).await
     }
 
     async fn branch_exists(&self, branch: &str) -> Result<bool> {

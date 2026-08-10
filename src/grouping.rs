@@ -46,10 +46,7 @@ pub fn group_candidates(
                 } else {
                     format!("{}-{}", rule.name, sub_key)
                 };
-                rule_buckets
-                    .entry(bucket_name)
-                    .or_default()
-                    .push(candidate);
+                rule_buckets.entry(bucket_name).or_default().push(candidate);
                 continue 'outer;
             }
         }
@@ -103,7 +100,10 @@ pub fn group_candidates(
             } else {
                 let idx = groups.len();
                 per_dep.insert(name.clone(), idx);
-                groups.push(Group { name, candidates: vec![candidate] });
+                groups.push(Group {
+                    name,
+                    candidates: vec![candidate],
+                });
             }
         }
     }
@@ -216,8 +216,20 @@ mod tests {
     #[test]
     fn per_dependency_default() {
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "7.2.0", "Dockerfile", docker_registry("redis")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "7.2.0",
+                "Dockerfile",
+                docker_registry("redis"),
+            ),
         ];
         let groups = group_candidates(candidates, &[], "per-dependency");
         assert_eq!(groups.len(), 2);
@@ -231,8 +243,20 @@ mod tests {
     #[test]
     fn grouped_default_merges_unmatched() {
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "7.2.0", "Dockerfile", docker_registry("redis")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "7.2.0",
+                "Dockerfile",
+                docker_registry("redis"),
+            ),
         ];
         let groups = group_candidates(candidates, &[], "grouped");
         assert_eq!(groups.len(), 1);
@@ -249,9 +273,27 @@ mod tests {
             separate_major: false,
         };
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "7.2.0", "Dockerfile", docker_registry("redis")),
-            make_candidate("postgres", "15.0.0", "16.0.0", "docker-compose.yaml", docker_registry("postgres")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "7.2.0",
+                "Dockerfile",
+                docker_registry("redis"),
+            ),
+            make_candidate(
+                "postgres",
+                "15.0.0",
+                "16.0.0",
+                "docker-compose.yaml",
+                docker_registry("postgres"),
+            ),
         ];
         let groups = group_candidates(candidates, &[rule], "per-dependency");
         // "infra" group + 1 per-dep group for postgres
@@ -269,9 +311,27 @@ mod tests {
             separate_major: false,
         };
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.25.1", "Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "7.0.1", "Dockerfile", docker_registry("redis")),
-            make_candidate("postgres", "15.0.0", "15.1.0", "Dockerfile", docker_registry("postgres")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.25.1",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "7.0.1",
+                "Dockerfile",
+                docker_registry("redis"),
+            ),
+            make_candidate(
+                "postgres",
+                "15.0.0",
+                "15.1.0",
+                "Dockerfile",
+                docker_registry("postgres"),
+            ),
         ];
         let groups = group_candidates(candidates, &[rule], "per-dependency");
         // patch group + minor group
@@ -291,8 +351,20 @@ mod tests {
             separate_major: false,
         };
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile", docker_registry("nginx")),
-            make_candidate("my-chart", "0.1.0", "0.2.0", "charts/values.yaml", helm_registry("https://charts.example.com", "my-chart")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "my-chart",
+                "0.1.0",
+                "0.2.0",
+                "charts/values.yaml",
+                helm_registry("https://charts.example.com", "my-chart"),
+            ),
         ];
         let groups = group_candidates(candidates, &[rule], "per-dependency");
         assert_eq!(groups.len(), 2);
@@ -309,8 +381,20 @@ mod tests {
             separate_major: true,
         };
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "8.0.0", "Dockerfile", docker_registry("redis")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "8.0.0",
+                "Dockerfile",
+                docker_registry("redis"),
+            ),
         ];
         let groups = group_candidates(candidates, &[rule], "per-dependency");
         assert_eq!(groups.len(), 2);
@@ -329,9 +413,27 @@ mod tests {
             separate_major: false,
         };
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "services/web/Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "7.2.0", "services/cache/Dockerfile", docker_registry("redis")),
-            make_candidate("postgres", "15.0.0", "16.0.0", "services/web/docker-compose.yaml", docker_registry("postgres")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "services/web/Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "7.2.0",
+                "services/cache/Dockerfile",
+                docker_registry("redis"),
+            ),
+            make_candidate(
+                "postgres",
+                "15.0.0",
+                "16.0.0",
+                "services/web/docker-compose.yaml",
+                docker_registry("postgres"),
+            ),
         ];
         let groups = group_candidates(candidates, &[rule], "per-dependency");
         assert_eq!(groups.len(), 2);
@@ -356,8 +458,20 @@ mod tests {
             separate_major: false,
         };
         let candidates = vec![
-            make_candidate("nginx", "1.25.0", "1.26.0", "Dockerfile", docker_registry("nginx")),
-            make_candidate("redis", "7.0.0", "7.2.0", "Dockerfile", docker_registry("redis")),
+            make_candidate(
+                "nginx",
+                "1.25.0",
+                "1.26.0",
+                "Dockerfile",
+                docker_registry("nginx"),
+            ),
+            make_candidate(
+                "redis",
+                "7.0.0",
+                "7.2.0",
+                "Dockerfile",
+                docker_registry("redis"),
+            ),
         ];
         let groups = group_candidates(candidates, &[rule1, rule2], "per-dependency");
         assert_eq!(groups.len(), 2);

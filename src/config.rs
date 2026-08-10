@@ -511,8 +511,8 @@ impl Config {
                 .ok();
         }
 
-        if let Ok(url) = std::env::var("REFORGE_GITLAB_URL")
-            .or_else(|_| std::env::var("RENOVATE_GITLAB_URL"))
+        if let Ok(url) =
+            std::env::var("REFORGE_GITLAB_URL").or_else(|_| std::env::var("RENOVATE_GITLAB_URL"))
         {
             config.gitlab.url = url;
         }
@@ -560,7 +560,11 @@ impl Config {
         };
 
         Ok(Config {
-            gitlab: GitLabConfig { url, token, insecure: false },
+            gitlab: GitLabConfig {
+                url,
+                token,
+                insecure: false,
+            },
             scan: ScanConfig { projects },
             managers: ManagersConfig::default(),
             versioning: VersioningConfig::default(),

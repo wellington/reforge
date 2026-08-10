@@ -95,15 +95,11 @@ impl ReplacementDatabase {
         }
 
         let contents = std::fs::read_to_string(path).map_err(|e| {
-            ReforgeError::Config(format!(
-                "Failed to read replacements file '{path}': {e}"
-            ))
+            ReforgeError::Config(format!("Failed to read replacements file '{path}': {e}"))
         })?;
 
         let file: TomlFile = toml::from_str(&contents).map_err(|e| {
-            ReforgeError::Config(format!(
-                "Invalid replacements file '{path}': {e}"
-            ))
+            ReforgeError::Config(format!("Invalid replacements file '{path}': {e}"))
         })?;
 
         Ok(Self { rules: file.rules })
@@ -226,15 +222,12 @@ fn dep_name_and_registry(dep: &Dependency) -> (String, Option<String>) {
     use crate::manager::RegistrySource;
 
     match &dep.registry {
-        RegistrySource::DockerRegistry { image, registry } => {
-            (image.clone(), registry.clone())
-        }
-        RegistrySource::HelmRepository { chart_name, repo_url } => {
-            (chart_name.clone(), Some(repo_url.clone()))
-        }
-        RegistrySource::OciHelmRegistry { image, registry } => {
-            (image.clone(), registry.clone())
-        }
+        RegistrySource::DockerRegistry { image, registry } => (image.clone(), registry.clone()),
+        RegistrySource::HelmRepository {
+            chart_name,
+            repo_url,
+        } => (chart_name.clone(), Some(repo_url.clone())),
+        RegistrySource::OciHelmRegistry { image, registry } => (image.clone(), registry.clone()),
     }
 }
 
@@ -322,8 +315,14 @@ mod tests {
 
     #[test]
     fn test_glob_match_wildcard_prefix() {
-        assert!(glob_match("gcr.io/google-containers/*", "gcr.io/google-containers/pause"));
-        assert!(!glob_match("gcr.io/google-containers/*", "gcr.io/other/pause"));
+        assert!(glob_match(
+            "gcr.io/google-containers/*",
+            "gcr.io/google-containers/pause"
+        ));
+        assert!(!glob_match(
+            "gcr.io/google-containers/*",
+            "gcr.io/other/pause"
+        ));
     }
 
     #[test]
@@ -389,7 +388,10 @@ mod tests {
             reason: None,
             deprecated_only: false,
         };
-        assert_eq!(rule.resolve_new_name("nginx"), "nginxinc/nginx-unprivileged");
+        assert_eq!(
+            rule.resolve_new_name("nginx"),
+            "nginxinc/nginx-unprivileged"
+        );
     }
 
     // --- ReplacementDatabase built-in ---
@@ -434,7 +436,9 @@ mod tests {
         let actions = check_dependencies(&[dep], &db);
         assert_eq!(actions.len(), 1);
         match &actions[0] {
-            ReplacementAction::Replace { from_ref, to_ref, .. } => {
+            ReplacementAction::Replace {
+                from_ref, to_ref, ..
+            } => {
                 assert!(from_ref.contains("nginx"));
                 assert!(to_ref.contains("nginx-unprivileged"));
             }

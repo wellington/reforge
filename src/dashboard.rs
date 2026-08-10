@@ -11,8 +11,8 @@ use tracing::{debug, info};
 
 use crate::error::Result;
 use crate::manager::{Dependency, RegistrySource};
-use crate::platform::gitlab::{GitLabClient, Issue, MergeRequest};
 use crate::orchestrator::UpdateCandidate;
+use crate::platform::gitlab::{GitLabClient, Issue, MergeRequest};
 
 /// Title used for the GitLab dashboard issue.
 pub const DASHBOARD_TITLE: &str = "Dependency Dashboard";
@@ -65,10 +65,7 @@ pub fn build_statuses(
             if let Some(candidate) = candidate_map.get(dep.name.as_str()) {
                 format!(
                     "{}{}-{}-{}",
-                    branch_prefix,
-                    manager,
-                    sanitized,
-                    candidate.new_version.original_tag
+                    branch_prefix, manager, sanitized, candidate.new_version.original_tag
                 )
             } else {
                 String::new()
@@ -141,9 +138,7 @@ pub fn render_dashboard(statuses: &[DependencyStatus], project_label: &str) -> S
 
     body.push_str(DASHBOARD_MARKER);
     body.push('\n');
-    body.push_str(&format!(
-        "## Dependency Dashboard — {project_label}\n\n"
-    ));
+    body.push_str(&format!("## Dependency Dashboard — {project_label}\n\n"));
     body.push_str(
         "This issue lists all dependencies tracked by **reforge**. \
         Check a box next to a pending update to trigger its MR immediately.\n\n",
@@ -224,15 +219,11 @@ pub async fn upsert_gitlab_dashboard(
         .list_issues(project, Some(DASHBOARD_TITLE), Some("opened"))
         .await?;
 
-    let dashboard_issue = existing
-        .into_iter()
-        .find(|i| i.title == DASHBOARD_TITLE);
+    let dashboard_issue = existing.into_iter().find(|i| i.title == DASHBOARD_TITLE);
 
     if let Some(issue) = dashboard_issue {
         info!("Updating existing dashboard issue #{}", issue.iid);
-        gitlab
-            .update_issue(project, issue.iid, body)
-            .await?;
+        gitlab.update_issue(project, issue.iid, body).await?;
         // Return a refreshed copy with the new description
         let mut updated = issue;
         updated.description = Some(body.to_string());

@@ -20,7 +20,10 @@ pub struct RateLimiter {
 
 impl RateLimiter {
     pub fn new(max_open_mrs: Option<usize>, current_open: usize) -> Self {
-        Self { max_open_mrs, current_open }
+        Self {
+            max_open_mrs,
+            current_open,
+        }
     }
 
     /// Returns `true` when a new MR may be created.
@@ -75,10 +78,7 @@ impl PriorityOrder {
         if security_deps.contains(&c.dependency.name) {
             return PriorityOrder::Security;
         }
-        let ut = UpdateType::classify(
-            &c.dependency.current_version,
-            &c.new_version.original_tag,
-        );
+        let ut = UpdateType::classify(&c.dependency.current_version, &c.new_version.original_tag);
         Self::from_update_type(ut.as_ref())
     }
 }
@@ -218,7 +218,11 @@ mod tests {
 
     #[test]
     fn schedule_no_restrictions() {
-        let window = ScheduleWindow { days: vec![], hours_start: None, hours_end: None };
+        let window = ScheduleWindow {
+            days: vec![],
+            hours_start: None,
+            hours_end: None,
+        };
         // Any time should pass
         assert!(is_within_schedule_window(utc(2026, 4, 6, 3), &window));
     }

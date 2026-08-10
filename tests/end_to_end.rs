@@ -28,10 +28,18 @@ async fn create_test_repo() -> TempDir {
     git(dir, &["config", "user.email", "test@reforge.dev"]).await;
     git(dir, &["config", "user.name", "Reforge Test"]).await;
 
-    tokio::fs::create_dir_all(dir.join("values/speedtest")).await.unwrap();
-    tokio::fs::create_dir_all(dir.join("values/vault-unseal")).await.unwrap();
-    tokio::fs::create_dir_all(dir.join("apps/app")).await.unwrap();
-    tokio::fs::create_dir_all(dir.join("charts/login")).await.unwrap();
+    tokio::fs::create_dir_all(dir.join("values/speedtest"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(dir.join("values/vault-unseal"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(dir.join("apps/app"))
+        .await
+        .unwrap();
+    tokio::fs::create_dir_all(dir.join("charts/login"))
+        .await
+        .unwrap();
 
     tokio::fs::write(
         dir.join("Dockerfile"),
@@ -168,7 +176,9 @@ async fn setup_docker_registry_mocks(server: &MockServer) {
 
 async fn setup_oci_helm_registry_mocks(server: &MockServer) {
     Mock::given(method("GET"))
-        .and(path("/v2/developer-excellence/app-charts/stateless-http-service/tags/list"))
+        .and(path(
+            "/v2/developer-excellence/app-charts/stateless-http-service/tags/list",
+        ))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "name": "developer-excellence/app-charts/stateless-http-service",
             "tags": ["13.0.0", "14.0.0", "14.1.0", "14.2.0", "15.0.0",
@@ -399,8 +409,7 @@ registry_url = "{mock_host}/developer-excellence/app-charts"
         &regex_section,
     );
 
-    let (stdout, stderr, success) =
-        run_reforge(repo_path, &config, &["--no-dashboard"]).await;
+    let (stdout, stderr, success) = run_reforge(repo_path, &config, &["--no-dashboard"]).await;
     eprintln!("=== REGEX STDOUT ===\n{}", stdout);
     eprintln!("=== REGEX STDERR ===\n{}", stderr);
     assert!(success, "reforge failed: {}", stderr);
@@ -424,7 +433,10 @@ registry_url = "{mock_host}/developer-excellence/app-charts"
 
     assert!(!updated.contains("14.1.0"), "Should no longer have 14.1.0");
     // semver-minor strategy: 14.1.0 -> 14.2.0 (same major, highest minor)
-    assert!(updated.contains("14.2.0"), "Should have 14.2.0 (semver-minor)");
+    assert!(
+        updated.contains("14.2.0"),
+        "Should have 14.2.0 (semver-minor)"
+    );
 
     git(repo_path, &["checkout", "main"]).await;
 }
@@ -446,7 +458,9 @@ async fn test_idempotent_no_duplicate_branches() {
     let _ = tokio::fs::remove_dir_all(repo_path.join("apps")).await;
     // Use mock_host as explicit registry in Dockerfile to avoid Docker Hub redirect
     let dockerfile = format!("FROM {mock_host}/library/nginx:1.25.0\nRUN echo hello\n");
-    tokio::fs::write(repo_path.join("Dockerfile"), &dockerfile).await.unwrap();
+    tokio::fs::write(repo_path.join("Dockerfile"), &dockerfile)
+        .await
+        .unwrap();
 
     git(repo_path, &["add", "-A"]).await;
     git(repo_path, &["commit", "-m", "simplify"]).await;
@@ -489,7 +503,9 @@ async fn test_dockerfile_update_content_is_correct() {
     let repo_path = repo.path();
 
     let dockerfile = format!("FROM {mock_host}/library/nginx:1.25.0\nRUN echo hello\n");
-    tokio::fs::write(repo_path.join("Dockerfile"), &dockerfile).await.unwrap();
+    tokio::fs::write(repo_path.join("Dockerfile"), &dockerfile)
+        .await
+        .unwrap();
     let _ = tokio::fs::remove_dir_all(repo_path.join("values")).await;
     let _ = tokio::fs::remove_dir_all(repo_path.join("charts")).await;
     let _ = tokio::fs::remove_dir_all(repo_path.join("apps")).await;
@@ -520,12 +536,24 @@ async fn test_dockerfile_update_content_is_correct() {
         .expect("Should find a reforge branch for nginx");
 
     git(repo_path, &["checkout", update_branch]).await;
-    let updated = tokio::fs::read_to_string(repo_path.join("Dockerfile")).await.unwrap();
+    let updated = tokio::fs::read_to_string(repo_path.join("Dockerfile"))
+        .await
+        .unwrap();
 
-    assert!(!updated.contains(":1.25.0"), "Should no longer have :1.25.0");
+    assert!(
+        !updated.contains(":1.25.0"),
+        "Should no longer have :1.25.0"
+    );
     // Mock has tags up to 1.27.1; semver-minor permits any 1.x update
-    assert!(updated.contains(":1.27.1"), "Should have :1.27.1. Got:\n{}", updated);
-    assert!(updated.contains("RUN echo hello"), "Non-FROM lines preserved");
+    assert!(
+        updated.contains(":1.27.1"),
+        "Should have :1.27.1. Got:\n{}",
+        updated
+    );
+    assert!(
+        updated.contains("RUN echo hello"),
+        "Non-FROM lines preserved"
+    );
 
     git(repo_path, &["checkout", "main"]).await;
 }
@@ -580,12 +608,16 @@ async fn test_values_yaml_image_updates() {
         let updated = tokio::fs::read_to_string(repo_path.join("values/vault-unseal/values.yaml"))
             .await
             .unwrap();
-        assert!(!updated.contains("1.16.0"), "vault should be updated from 1.16.0");
+        assert!(
+            !updated.contains("1.16.0"),
+            "vault should be updated from 1.16.0"
+        );
         // semver-minor: 1.16.0 -> 1.17.2 (or 1.18.0 depending on strategy).
         // The mock has 1.17.0, 1.17.1, 1.17.2, 1.18.0; best minor update is 1.18.0.
         assert!(
             updated.contains("1.18.0") || updated.contains("1.17."),
-            "vault should be updated to a newer version. Got:\n{}", updated,
+            "vault should be updated to a newer version. Got:\n{}",
+            updated,
         );
         git(repo_path, &["checkout", "main"]).await;
     }

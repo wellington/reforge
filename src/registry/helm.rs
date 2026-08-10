@@ -75,18 +75,18 @@ impl HelmRegistryClient {
         }
 
         let body = resp.text().await?;
-        let index: HelmIndex =
-            serde_yaml::from_str(&body).map_err(|e| ReforgeError::Registry {
-                registry: repo_url.to_string(),
-                message: format!("Failed to parse index.yaml: {e}"),
-            })?;
+        let index: HelmIndex = serde_yaml::from_str(&body).map_err(|e| ReforgeError::Registry {
+            registry: repo_url.to_string(),
+            message: format!("Failed to parse index.yaml: {e}"),
+        })?;
 
-        let entries = index.entries.get(chart_name).ok_or_else(|| {
-            ReforgeError::Registry {
+        let entries = index
+            .entries
+            .get(chart_name)
+            .ok_or_else(|| ReforgeError::Registry {
                 registry: repo_url.to_string(),
                 message: format!("Chart '{chart_name}' not found in index"),
-            }
-        })?;
+            })?;
 
         let versions = entries
             .iter()

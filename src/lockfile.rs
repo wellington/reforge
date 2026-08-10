@@ -65,7 +65,10 @@ pub fn generate_chart_lock(
     let mut lines = Vec::new();
     lines.push("dependencies:".to_string());
     for dep in deps {
-        lines.push(format!("- digest: {}", digests.get(&dep.name).map_or("", String::as_str)));
+        lines.push(format!(
+            "- digest: {}",
+            digests.get(&dep.name).map_or("", String::as_str)
+        ));
         lines.push(format!("  name: {}", dep.name));
         lines.push(format!("  repository: {}", dep.repository));
         lines.push(format!("  version: {}", dep.version));
@@ -113,7 +116,12 @@ pub fn update_chart_lock(
                 let next = lines[i];
                 let next_trim = next.trim();
                 // A new list item or a top-level key ends the block.
-                if next_trim.starts_with("- ") || (!next_trim.is_empty() && !next_trim.starts_with('#') && !next.starts_with(' ') && !next.starts_with('\t')) {
+                if next_trim.starts_with("- ")
+                    || (!next_trim.is_empty()
+                        && !next_trim.starts_with('#')
+                        && !next.starts_with(' ')
+                        && !next.starts_with('\t'))
+                {
                     break;
                 }
                 block_lines.push(next);
@@ -264,10 +272,7 @@ fn extract_chart_url_from_index(
         })?;
 
     for entry in entries {
-        let entry_version = entry
-            .get("version")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let entry_version = entry.get("version").and_then(|v| v.as_str()).unwrap_or("");
         if entry_version == version {
             // Prefer the first URL listed in the `urls` field.
             if let Some(url) = entry
@@ -297,9 +302,8 @@ async fn fetch_oci_digest(
     registry: Option<&str>,
     version: &str,
 ) -> Result<String> {
-    let registry_host = registry.unwrap_or_else(|| {
-        image.split('/').next().unwrap_or("registry-1.docker.io")
-    });
+    let registry_host =
+        registry.unwrap_or_else(|| image.split('/').next().unwrap_or("registry-1.docker.io"));
 
     // Strip registry host from image path if present.
     let repo_path = if image.starts_with(registry_host) {
@@ -308,9 +312,7 @@ async fn fetch_oci_digest(
         image
     };
 
-    let manifest_url = format!(
-        "https://{registry_host}/v2/{repo_path}/manifests/{version}"
-    );
+    let manifest_url = format!("https://{registry_host}/v2/{repo_path}/manifests/{version}");
 
     debug!("Fetching OCI manifest from {}", manifest_url);
 
@@ -379,13 +381,11 @@ generated: \"2024-01-01T00:00:00.000000000Z\"
 
     #[test]
     fn test_generate_chart_lock() {
-        let deps = vec![
-            ChartLockDependency {
-                name: "nginx".to_string(),
-                repository: "https://charts.example.com".to_string(),
-                version: "1.2.3".to_string(),
-            },
-        ];
+        let deps = vec![ChartLockDependency {
+            name: "nginx".to_string(),
+            repository: "https://charts.example.com".to_string(),
+            version: "1.2.3".to_string(),
+        }];
         let mut digests = HashMap::new();
         digests.insert("nginx".to_string(), "sha256:deadbeef".to_string());
 

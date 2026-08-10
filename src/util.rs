@@ -35,7 +35,11 @@ fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
             if pattern.get(1) == Some(&'*') {
                 // `**` — consume any number of characters including '/'
                 let rest = &pattern[2..];
-                let rest = if rest.first() == Some(&'/') { &rest[1..] } else { rest };
+                let rest = if rest.first() == Some(&'/') {
+                    &rest[1..]
+                } else {
+                    rest
+                };
                 for i in 0..=text.len() {
                     if glob_match_inner(rest, &text[i..]) {
                         return true;

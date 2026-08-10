@@ -31,11 +31,7 @@ impl RegexManager {
         Ok(Self { config, pattern })
     }
 
-    fn map_datasource(
-        &self,
-        dep_name: &str,
-        registry_url: Option<&str>,
-    ) -> RegistrySource {
+    fn map_datasource(&self, dep_name: &str, registry_url: Option<&str>) -> RegistrySource {
         let effective_registry = registry_url
             .map(|u| u.trim_end_matches('/').to_string())
             .or_else(|| self.config.registry_url.clone());
@@ -57,9 +53,7 @@ impl RegexManager {
                     }
                     None => dep_name.to_string(),
                 };
-                let registry = image
-                    .find('/')
-                    .map(|idx| image[..idx].to_string());
+                let registry = image.find('/').map(|idx| image[..idx].to_string());
                 RegistrySource::OciHelmRegistry { image, registry }
             }
             Datasource::HelmRepo => {
@@ -169,7 +163,11 @@ mod tests {
         // followed by helmVersion on the next line.
         let pattern =
             "helmChart:\\s*['\"]?(?:oci://[^'\"\\s]*/)?(?P<depName>[^'\"\\s/]+)['\"]?\\s*\nhelmVersion:\\s*['\"]?(?P<currentValue>[^'\"\\s]+)";
-        let config = make_config(Datasource::HelmOci, pattern, Some("oci://oci-charts.example.com"));
+        let config = make_config(
+            Datasource::HelmOci,
+            pattern,
+            Some("oci://oci-charts.example.com"),
+        );
         let mgr = RegexManager::new(config).unwrap();
 
         let contents = "\
@@ -234,11 +232,7 @@ helmVersion: '14.1.0'\n";
 
     #[test]
     fn test_validation_missing_current_value() {
-        let config = make_config(
-            Datasource::Docker,
-            r"image:\s*(?P<depName>[^\s]+)",
-            None,
-        );
+        let config = make_config(Datasource::Docker, r"image:\s*(?P<depName>[^\s]+)", None);
         let err = RegexManager::new(config).unwrap_err();
         assert!(err.to_string().contains("currentValue"));
     }
@@ -265,7 +259,8 @@ helmVersion: '14.1.0'\n";
 
     #[test]
     fn test_registry_url_capture_group() {
-        let pattern = r"(?P<registryUrl>https://[^/]+)/(?P<depName>[^:\s]+):(?P<currentValue>[^\s]+)";
+        let pattern =
+            r"(?P<registryUrl>https://[^/]+)/(?P<depName>[^:\s]+):(?P<currentValue>[^\s]+)";
         let config = make_config(Datasource::Docker, pattern, None);
         let mgr = RegexManager::new(config).unwrap();
 
@@ -283,8 +278,14 @@ helmVersion: '14.1.0'\n";
         assert!(!file_matches_pattern("Chart.json", "Chart.yaml"));
         assert!(file_matches_pattern("values-prod.yaml", "values-*.yaml"));
         assert!(!file_matches_pattern("values-prod.yaml", "Chart.yaml"));
-        assert!(!file_matches_pattern("apps/login/app.yaml", "**/apps/*.yaml"));
+        assert!(!file_matches_pattern(
+            "apps/login/app.yaml",
+            "**/apps/*.yaml"
+        ));
         assert!(file_matches_pattern("apps/app.yaml", "**/apps/*.yaml"));
-        assert!(file_matches_pattern("apps/login/app.yaml", "apps/**/*.yaml"));
+        assert!(file_matches_pattern(
+            "apps/login/app.yaml",
+            "apps/**/*.yaml"
+        ));
     }
 }

@@ -77,11 +77,20 @@ pub struct UpdateCandidate {
 }
 
 impl Orchestrator {
-    pub fn new(config: Config, dry_run: bool, json_output: bool, dashboard_enabled: bool) -> Result<Self> {
+    pub fn new(
+        config: Config,
+        dry_run: bool,
+        json_output: bool,
+        dashboard_enabled: bool,
+    ) -> Result<Self> {
         // Only construct a GitLab client when not in local mode.
         let gitlab = if config.local_path.is_none() {
             let token = config.gitlab.token.as_deref().unwrap_or("");
-            Some(GitLabClient::with_options(&config.gitlab.url, token, config.gitlab.insecure)?)
+            Some(GitLabClient::with_options(
+                &config.gitlab.url,
+                token,
+                config.gitlab.insecure,
+            )?)
         } else {
             None
         };
@@ -96,7 +105,11 @@ impl Orchestrator {
 
         let scanner = Self::build_scanner(&config);
         let version_policy = VersionPolicy::new(config.versioning.pin_strategy.clone());
-        let options = RunOptions { dry_run, json_output, dashboard_enabled };
+        let options = RunOptions {
+            dry_run,
+            json_output,
+            dashboard_enabled,
+        };
         let enricher = MrEnricher {
             changelog: ChangelogFetcher::new(config.changelog.github_token.clone()),
             vuln: VulnerabilityChecker::new(),
@@ -137,7 +150,10 @@ impl Orchestrator {
             }
         }
 
-        Scanner { managers, regex_manager_patterns }
+        Scanner {
+            managers,
+            regex_manager_patterns,
+        }
     }
 
     fn build_replacement_db(config: &Config) -> ReplacementDatabase {
@@ -148,9 +164,15 @@ impl Orchestrator {
                     Ok(extra) => {
                         let count = extra.rules.len();
                         db.rules.extend(extra.rules);
-                        info!("Loaded {} extra replacement rule(s) from {}", count, rules_path);
+                        info!(
+                            "Loaded {} extra replacement rule(s) from {}",
+                            count, rules_path
+                        );
                     }
-                    Err(e) => warn!("Failed to load replacement rules from {}: {}", rules_path, e),
+                    Err(e) => warn!(
+                        "Failed to load replacement rules from {}: {}",
+                        rules_path, e
+                    ),
                 }
             }
         }
@@ -169,16 +191,31 @@ impl Orchestrator {
             debug!("Fetching file: {}", file_path);
             let contents = match source.get_file(file_path, default_branch).await {
                 Ok(c) => c,
-                Err(e) => { warn!("Failed to fetch {}: {}", file_path, e); continue; }
+                Err(e) => {
+                    warn!("Failed to fetch {}: {}", file_path, e);
+                    continue;
+                }
             };
             for manager in &self.scanner.managers {
                 if self.file_matches_manager(file_path, manager.as_ref()) {
                     match manager.extract_dependencies(file_path, &contents) {
                         Ok(deps) => {
-                            debug!("Found {} dependencies in {} ({})", deps.len(), file_path, manager.name());
-                            for dep in deps { all_deps.push((dep, contents.clone())); }
+                            debug!(
+                                "Found {} dependencies in {} ({})",
+                                deps.len(),
+                                file_path,
+                                manager.name()
+                            );
+                            for dep in deps {
+                                all_deps.push((dep, contents.clone()));
+                            }
                         }
-                        Err(e) => warn!("Failed to extract dependencies from {} ({}): {}", file_path, manager.name(), e),
+                        Err(e) => warn!(
+                            "Failed to extract dependencies from {} ({}): {}",
+                            file_path,
+                            manager.name(),
+                            e
+                        ),
                     }
                 }
             }
@@ -191,7 +228,9 @@ impl Orchestrator {
             info!("Running in local mode against {:?}", local_path);
             let source = LocalGitSource::new(local_path.clone());
             source.repo.validate().await?;
-            return self.process_with_source(&source, local_path.display().to_string().as_str()).await;
+            return self
+                .process_with_source(&source, local_path.display().to_string().as_str())
+                .await;
         }
 
         if self.config.scan.projects.is_empty() {
@@ -199,15 +238,18 @@ impl Orchestrator {
             return Ok(());
         }
 
-        let _gitlab = self
-            .gitlab
-            .as_ref()
-            .ok_or_else(|| crate::error::ReforgeError::Config("GitLab client required in API mode".into()))?;
+        let _gitlab = self.gitlab.as_ref().ok_or_else(|| {
+            crate::error::ReforgeError::Config("GitLab client required in API mode".into())
+        })?;
 
         for project in &self.config.scan.projects {
             info!("Scanning project: {}", project);
             let source = GitLabSource {
-                client: GitLabClient::with_options(&self.config.gitlab.url, self.config.gitlab.token.as_deref().unwrap_or(""), self.config.gitlab.insecure)?,
+                client: GitLabClient::with_options(
+                    &self.config.gitlab.url,
+                    self.config.gitlab.token.as_deref().unwrap_or(""),
+                    self.config.gitlab.insecure,
+                )?,
                 project: project.clone(),
             };
             if let Err(e) = self.process_with_source(&source, project).await {
@@ -230,7 +272,9 @@ impl Orchestrator {
             .collect();
         info!("Found {} matching files", file_paths.len());
 
-        let all_deps = self.extract_all_deps(source, &file_paths, &default_branch).await;
+        let all_deps = self
+            .extract_all_deps(source, &file_paths, &default_branch)
+            .await;
         info!("Extracted {} total dependencies", all_deps.len());
 
         // Check for deprecated / renamed images before doing version checks.
@@ -244,7 +288,10 @@ impl Orchestrator {
         }
 
         let candidates = self.check_updates_concurrent(&all_deps).await;
-        info!("Found {} available updates (before dedup)", candidates.len());
+        info!(
+            "Found {} available updates (before dedup)",
+            candidates.len()
+        );
         let candidates = Self::deduplicate_candidates(candidates);
         info!("Found {} available updates (after dedup)", candidates.len());
 
@@ -264,15 +311,24 @@ impl Orchestrator {
         );
         let flat_candidates: Vec<UpdateCandidate> = groups
             .iter()
-            .flat_map(|g| g.candidates.iter().map(|c| UpdateCandidate {
-                dependency: c.dependency.clone(),
-                new_version: c.new_version.clone(),
-                file_content: c.file_content.clone(),
-            }))
+            .flat_map(|g| {
+                g.candidates.iter().map(|c| UpdateCandidate {
+                    dependency: c.dependency.clone(),
+                    new_version: c.new_version.clone(),
+                    file_content: c.file_content.clone(),
+                })
+            })
             .collect();
 
-        self.dispatch_updates(source, label, &default_branch, &groups, &all_deps, &flat_candidates)
-            .await
+        self.dispatch_updates(
+            source,
+            label,
+            &default_branch,
+            &groups,
+            &all_deps,
+            &flat_candidates,
+        )
+        .await
     }
 
     /// Run all dep-version checks concurrently and return only the candidates that have updates.
@@ -308,18 +364,24 @@ impl Orchestrator {
         flat_candidates: &[UpdateCandidate],
     ) -> Result<()> {
         if let Some(local_path) = &self.config.local_path {
-            self.apply_local_updates(source, default_branch, groups).await?;
+            self.apply_local_updates(source, default_branch, groups)
+                .await?;
             let repo = crate::platform::git::GitRepo::new(local_path.clone());
             if let Err(e) = repo.checkout(default_branch).await {
-                warn!("Failed to checkout default branch '{}': {}", default_branch, e);
+                warn!(
+                    "Failed to checkout default branch '{}': {}",
+                    default_branch, e
+                );
             } else {
                 info!("Returned to default branch '{}'", default_branch);
             }
             self.write_local_dashboard(label, all_deps, flat_candidates, default_branch, &repo)
                 .await;
         } else {
-            self.create_gitlab_mrs(source, label, default_branch, groups).await?;
-            self.write_gitlab_dashboard(label, all_deps, flat_candidates).await;
+            self.create_gitlab_mrs(source, label, default_branch, groups)
+                .await?;
+            self.write_gitlab_dashboard(label, all_deps, flat_candidates)
+                .await;
         }
         Ok(())
     }
@@ -335,14 +397,22 @@ impl Orchestrator {
         if !self.options.dashboard_enabled || !self.config.dashboard.enabled {
             return;
         }
-        let statuses = dashboard::build_statuses(all_deps, flat_candidates, &[], &self.config.merge_request.branch_prefix);
+        let statuses = dashboard::build_statuses(
+            all_deps,
+            flat_candidates,
+            &[],
+            &self.config.merge_request.branch_prefix,
+        );
         let body = dashboard::render_dashboard(&statuses, label);
         let path = &self.config.dashboard.local_path;
         if let Err(e) = dashboard::write_local_dashboard(&body, path) {
             error!("Failed to write local dashboard: {}", e);
         } else {
             info!("Dashboard written to {}", path);
-            match repo.add_and_commit(path, "chore: update dependency dashboard").await {
+            match repo
+                .add_and_commit(path, "chore: update dependency dashboard")
+                .await
+            {
                 Ok(_) => info!("Dashboard committed to '{}'", default_branch),
                 Err(e) => warn!("Failed to commit dashboard: {}", e),
             }
@@ -366,9 +436,21 @@ impl Orchestrator {
                 warn!("Failed to fetch open MRs for dashboard: {}", e);
                 vec![]
             });
-        let statuses = dashboard::build_statuses(all_deps, flat_candidates, &open_mrs, &self.config.merge_request.branch_prefix);
+        let statuses = dashboard::build_statuses(
+            all_deps,
+            flat_candidates,
+            &open_mrs,
+            &self.config.merge_request.branch_prefix,
+        );
         let body = dashboard::render_dashboard(&statuses, label);
-        match dashboard::upsert_gitlab_dashboard(gitlab, label, &body, &self.config.dashboard.labels).await {
+        match dashboard::upsert_gitlab_dashboard(
+            gitlab,
+            label,
+            &body,
+            &self.config.dashboard.labels,
+        )
+        .await
+        {
             Ok(issue) => info!("Dashboard issue updated: {}", issue.web_url),
             Err(e) => error!("Failed to upsert dashboard issue: {}", e),
         }
@@ -396,7 +478,10 @@ impl Orchestrator {
             let branch_name = if is_grouped {
                 self.branch_name_for_group(&group.name)
             } else {
-                self.branch_name_for(&group.candidates[0].dependency, &group.candidates[0].new_version)
+                self.branch_name_for(
+                    &group.candidates[0].dependency,
+                    &group.candidates[0].new_version,
+                )
             };
             let already_exists = source.branch_exists(&branch_name).await?;
             if already_exists {
@@ -415,7 +500,10 @@ impl Orchestrator {
     async fn apply_group_local(&self, source: &dyn FileSource, group: &Group, branch_name: &str) {
         let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
         for candidate in &group.candidates {
-            by_file.entry(candidate.dependency.file_path.clone()).or_default().push(candidate);
+            by_file
+                .entry(candidate.dependency.file_path.clone())
+                .or_default()
+                .push(candidate);
         }
 
         for (file_path, file_candidates) in &by_file {
@@ -424,31 +512,57 @@ impl Orchestrator {
                 .iter()
                 .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
                 .collect();
-            let (file_update, errors) = updater::apply_updates(updates, original_content, file_path);
+            let (file_update, errors) =
+                updater::apply_updates(updates, original_content, file_path);
             for e in &errors {
                 error!("Failed to apply update in group '{}': {}", group.name, e);
             }
             let commit_msg = if file_candidates.len() == 1 {
                 let c = file_candidates[0];
-                format!("chore(deps): update {} from {} to {}", c.dependency.name, c.dependency.current_version, c.new_version.original_tag)
+                format!(
+                    "chore(deps): update {} from {} to {}",
+                    c.dependency.name, c.dependency.current_version, c.new_version.original_tag
+                )
             } else {
                 format!("chore(deps): grouped update for '{}'", group.name)
             };
-            match source.commit_file(branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await {
-                Ok(commit) => info!("Committed {} update(s) on branch {} ({})", file_candidates.len(), branch_name, commit),
+            match source
+                .commit_file(
+                    branch_name,
+                    &file_update.file_path,
+                    &file_update.updated_content,
+                    &commit_msg,
+                )
+                .await
+            {
+                Ok(commit) => info!(
+                    "Committed {} update(s) on branch {} ({})",
+                    file_candidates.len(),
+                    branch_name,
+                    commit
+                ),
                 Err(e) => error!("Failed to commit to {}: {}", branch_name, e),
             }
-            self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name).await;
+            self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name)
+                .await;
         }
 
         // Log automerge hint for single-dependency groups.
         if group.candidates.len() == 1 {
             let candidate = &group.candidates[0];
-            let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
+            let update_type = UpdateType::classify(
+                &candidate.dependency.current_version,
+                &candidate.new_version.original_tag,
+            );
             let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            let policy_automerge = update_type
+                .as_ref()
+                .is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
             if self.config.merge_request.auto_merge || policy_automerge {
-                info!("Automerge would be applied for {} ({:?}) [local mode]", candidate.dependency.name, update_type);
+                info!(
+                    "Automerge would be applied for {} ({:?}) [local mode]",
+                    candidate.dependency.name, update_type
+                );
             }
         }
     }
@@ -464,17 +578,33 @@ impl Orchestrator {
             return;
         }
         let lock_path = chart_lock_path(file_path);
-        let Ok(lock_content) = source.get_file(&lock_path, branch_name).await else { return };
+        let Ok(lock_content) = source.get_file(&lock_path, branch_name).await else {
+            return;
+        };
         let mut updated_lock = lock_content;
         for c in file_candidates {
-            let new_digest = self.fetch_dep_digest(&c.dependency.registry, &c.new_version.original_tag).await;
-            updated_lock = lockfile::update_chart_lock(&updated_lock, &c.dependency.name, &c.new_version.original_tag, &new_digest);
+            let new_digest = self
+                .fetch_dep_digest(&c.dependency.registry, &c.new_version.original_tag)
+                .await;
+            updated_lock = lockfile::update_chart_lock(
+                &updated_lock,
+                &c.dependency.name,
+                &c.new_version.original_tag,
+                &new_digest,
+            );
         }
         let lock_commit_msg = format!(
             "chore(deps): update Chart.lock for {}",
-            file_candidates.iter().map(|c| c.dependency.name.as_str()).collect::<Vec<_>>().join(", ")
+            file_candidates
+                .iter()
+                .map(|c| c.dependency.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
-        match source.commit_file(branch_name, &lock_path, &updated_lock, &lock_commit_msg).await {
+        match source
+            .commit_file(branch_name, &lock_path, &updated_lock, &lock_commit_msg)
+            .await
+        {
             Ok(_) => info!("Updated Chart.lock at {}", lock_path),
             Err(e) => warn!("Failed to update Chart.lock at {}: {}", lock_path, e),
         }
@@ -512,10 +642,8 @@ impl Orchestrator {
             .map(|mr| mr.source_branch.clone())
             .collect();
 
-        let rate_limiter = RateLimiter::new(
-            self.config.merge_request.max_open_mrs,
-            existing_mrs.len(),
-        );
+        let rate_limiter =
+            RateLimiter::new(self.config.merge_request.max_open_mrs, existing_mrs.len());
 
         if !rate_limiter.can_create_mr() {
             info!(
@@ -554,7 +682,10 @@ impl Orchestrator {
             };
 
             if existing_branches.contains(&branch_name) {
-                info!("MR already exists for group '{}' (branch: {})", group.name, branch_name);
+                info!(
+                    "MR already exists for group '{}' (branch: {})",
+                    group.name, branch_name
+                );
                 continue;
             }
 
@@ -599,7 +730,9 @@ impl Orchestrator {
         dep: Dependency,
         file_content: String,
     ) -> Result<Option<UpdateCandidate>> {
-        let current = if let Some(v) = parse_version_lenient(&dep.current_version) { v } else {
+        let current = if let Some(v) = parse_version_lenient(&dep.current_version) {
+            v
+        } else {
             debug!(
                 "Cannot parse version '{}' for {}, skipping",
                 dep.current_version, dep.name
@@ -648,15 +781,26 @@ impl Orchestrator {
 
         let mut by_file: HashMap<String, Vec<&UpdateCandidate>> = HashMap::new();
         for candidate in &group.candidates {
-            by_file.entry(candidate.dependency.file_path.clone()).or_default().push(candidate);
+            by_file
+                .entry(candidate.dependency.file_path.clone())
+                .or_default()
+                .push(candidate);
         }
         for (file_path, file_candidates) in &by_file {
-            self.commit_single_file_gitlab(source, file_path, file_candidates, &group.name, branch_name).await?;
+            self.commit_single_file_gitlab(
+                source,
+                file_path,
+                file_candidates,
+                &group.name,
+                branch_name,
+            )
+            .await?;
         }
 
         let changelog_notes = self.maybe_fetch_changelog(group).await;
         let vulns = self.maybe_check_vulnerabilities(group).await;
-        let (mr_title, mr_body) = self.build_group_mr_content(group, changelog_notes.as_deref(), &vulns);
+        let (mr_title, mr_body) =
+            self.build_group_mr_content(group, changelog_notes.as_deref(), &vulns);
         let use_automerge = self.should_automerge_group(group);
 
         let mut labels = self.config.merge_request.labels.clone();
@@ -666,15 +810,20 @@ impl Orchestrator {
             }
         }
 
-        let mr = gitlab.create_mr(project, CreateMrParams {
-            source_branch: branch_name.to_string(),
-            target_branch: default_branch.to_string(),
-            title: mr_title,
-            description: mr_body,
-            labels,
-            assignee_ids: self.config.merge_request.assignees.clone(),
-            merge_when_pipeline_succeeds: if use_automerge { Some(true) } else { None },
-        }).await?;
+        let mr = gitlab
+            .create_mr(
+                project,
+                CreateMrParams {
+                    source_branch: branch_name.to_string(),
+                    target_branch: default_branch.to_string(),
+                    title: mr_title,
+                    description: mr_body,
+                    labels,
+                    assignee_ids: self.config.merge_request.assignees.clone(),
+                    merge_when_pipeline_succeeds: if use_automerge { Some(true) } else { None },
+                },
+            )
+            .await?;
 
         info!("Created MR !{}: {}", mr.iid, mr.web_url);
         Ok(())
@@ -691,26 +840,46 @@ impl Orchestrator {
     ) -> Result<()> {
         let original_content = &file_candidates[0].file_content;
         let updates: Vec<(&crate::manager::Dependency, &str)> = file_candidates
-            .iter().map(|c| (&c.dependency, c.new_version.original_tag.as_str())).collect();
+            .iter()
+            .map(|c| (&c.dependency, c.new_version.original_tag.as_str()))
+            .collect();
         let (file_update, errors) = updater::apply_updates(updates, original_content, file_path);
-        for e in &errors { error!("Failed to apply update in group '{}': {}", group_name, e); }
+        for e in &errors {
+            error!("Failed to apply update in group '{}': {}", group_name, e);
+        }
         let commit_msg = if file_candidates.len() == 1 {
             let c = file_candidates[0];
-            format!("chore(deps): update {} from {} to {}", c.dependency.name, c.dependency.current_version, c.new_version.original_tag)
+            format!(
+                "chore(deps): update {} from {} to {}",
+                c.dependency.name, c.dependency.current_version, c.new_version.original_tag
+            )
         } else {
             format!("chore(deps): grouped update for '{group_name}'")
         };
-        source.commit_file(branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await?;
-        self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name).await;
+        source
+            .commit_file(
+                branch_name,
+                &file_update.file_path,
+                &file_update.updated_content,
+                &commit_msg,
+            )
+            .await?;
+        self.maybe_update_chart_lock(source, file_path, file_candidates, branch_name)
+            .await;
         Ok(())
     }
 
     fn should_automerge_group(&self, group: &Group) -> bool {
         if group.candidates.len() == 1 {
             let candidate = &group.candidates[0];
-            let update_type = UpdateType::classify(&candidate.dependency.current_version, &candidate.new_version.original_tag);
+            let update_type = UpdateType::classify(
+                &candidate.dependency.current_version,
+                &candidate.new_version.original_tag,
+            );
             let evaluator = AutomergeEvaluator::new(&self.config.merge_request.automerge_policies);
-            let policy_automerge = update_type.as_ref().is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
+            let policy_automerge = update_type
+                .as_ref()
+                .is_some_and(|ut| evaluator.should_automerge(&candidate.dependency.name, ut, None));
             self.config.merge_request.auto_merge || policy_automerge
         } else {
             self.config.merge_request.auto_merge
@@ -795,17 +964,20 @@ impl Orchestrator {
         let candidate = &group.candidates[0];
         let registry_source_str = match &candidate.dependency.registry {
             RegistrySource::DockerRegistry { image, .. } => image.clone(),
-            RegistrySource::HelmRepository { repo_url, chart_name, .. } => {
+            RegistrySource::HelmRepository {
+                repo_url,
+                chart_name,
+                ..
+            } => {
                 format!("{repo_url}/{chart_name}")
             }
-            RegistrySource::OciHelmRegistry { registry, image } => {
-                match registry {
-                    Some(r) => format!("{r}/{image}"),
-                    None => image.clone(),
-                }
-            }
+            RegistrySource::OciHelmRegistry { registry, image } => match registry {
+                Some(r) => format!("{r}/{image}"),
+                None => image.clone(),
+            },
         };
-        self.enricher.changelog
+        self.enricher
+            .changelog
             .fetch_release_notes(
                 &candidate.dependency.name,
                 Some(&registry_source_str),
@@ -837,7 +1009,8 @@ impl Orchestrator {
             }
 
             let mut vulns = self
-                .enricher.vuln
+                .enricher
+                .vuln
                 .check_dependency(
                     &candidate.dependency.name,
                     ecosystem,
@@ -860,13 +1033,23 @@ impl Orchestrator {
     ) {
         use crate::rebase::StaleMrStrategy;
         let strategy = &self.config.merge_request.stale_mr_strategy;
-        if *strategy == StaleMrStrategy::Ignore { return; }
+        if *strategy == StaleMrStrategy::Ignore {
+            return;
+        }
 
         let prefix = &self.config.merge_request.branch_prefix;
-        let branches: Vec<String> = match repo.run(&["branch", "--list", &format!("{prefix}*")]).await {
-            Ok(out) => out.lines().map(|l: &str| l.trim().trim_start_matches("* ").to_string()).filter(|b: &String| !b.is_empty()).collect(),
-            Err(e) => { warn!("Failed to list local reforge branches: {}", e); return; }
-        };
+        let branches: Vec<String> =
+            match repo.run(&["branch", "--list", &format!("{prefix}*")]).await {
+                Ok(out) => out
+                    .lines()
+                    .map(|l: &str| l.trim().trim_start_matches("* ").to_string())
+                    .filter(|b: &String| !b.is_empty())
+                    .collect(),
+                Err(e) => {
+                    warn!("Failed to list local reforge branches: {}", e);
+                    return;
+                }
+            };
 
         for branch in &branches {
             rebase_single_local_branch(repo, branch, default_branch, strategy).await;
@@ -883,15 +1066,36 @@ impl Orchestrator {
     ) {
         for action in actions {
             match action {
-                ReplacementAction::DeprecationWarning { dep_name, file_path, reason } => {
-                    warn!("[replacement] DEPRECATED: {} in {} — {}", dep_name, file_path, reason.as_deref().unwrap_or("no details"));
+                ReplacementAction::DeprecationWarning {
+                    dep_name,
+                    file_path,
+                    reason,
+                } => {
+                    warn!(
+                        "[replacement] DEPRECATED: {} in {} — {}",
+                        dep_name,
+                        file_path,
+                        reason.as_deref().unwrap_or("no details")
+                    );
                 }
-                ReplacementAction::Replace { dep_name, file_path, from_ref, to_ref, reason: _ } => {
+                ReplacementAction::Replace {
+                    dep_name,
+                    file_path,
+                    from_ref,
+                    to_ref,
+                    reason: _,
+                } => {
                     if self.config.replacement.warn_only {
-                        warn!("[replacement] {} in {} should be migrated: {} → {}", dep_name, file_path, from_ref, to_ref);
+                        warn!(
+                            "[replacement] {} in {} should be migrated: {} → {}",
+                            dep_name, file_path, from_ref, to_ref
+                        );
                         continue;
                     }
-                    self.handle_replacement_replace(source, label, all_deps, dep_name, file_path, from_ref, to_ref, action).await;
+                    self.handle_replacement_replace(
+                        source, label, all_deps, dep_name, file_path, from_ref, to_ref, action,
+                    )
+                    .await;
                 }
             }
         }
@@ -908,12 +1112,21 @@ impl Orchestrator {
         to_ref: &str,
         action: &ReplacementAction,
     ) {
-        info!("[replacement] Creating migration MR: {} → {} ({})", from_ref, to_ref, file_path);
-        let file_content = all_deps.iter()
+        info!(
+            "[replacement] Creating migration MR: {} → {} ({})",
+            from_ref, to_ref, file_path
+        );
+        let file_content = all_deps
+            .iter()
             .find(|(d, _)| d.name == dep_name && d.file_path == file_path)
             .map_or("", |(_, c)| c.as_str());
 
-        let Some((branch_name, default_branch)) = self.commit_replacement_files(source, dep_name, file_path, from_ref, to_ref, file_content).await else { return };
+        let Some((branch_name, default_branch)) = self
+            .commit_replacement_files(source, dep_name, file_path, from_ref, to_ref, file_content)
+            .await
+        else {
+            return;
+        };
 
         let mr_body = render_replacement_mr_body(action);
         let mr_title = format!("chore(deps): migrate {dep_name} to {to_ref}");
@@ -921,20 +1134,32 @@ impl Orchestrator {
         if let Some(gitlab) = &self.gitlab {
             let mut labels = self.config.merge_request.labels.clone();
             labels.push("replacement".to_string());
-            match gitlab.create_mr(label, CreateMrParams {
-                source_branch: branch_name.clone(),
-                target_branch: default_branch,
-                title: mr_title,
-                description: mr_body,
-                labels,
-                assignee_ids: self.config.merge_request.assignees.clone(),
-                merge_when_pipeline_succeeds: None,
-            }).await {
-                Ok(mr) => info!("[replacement] Created migration MR !{}: {}", mr.iid, mr.web_url),
+            match gitlab
+                .create_mr(
+                    label,
+                    CreateMrParams {
+                        source_branch: branch_name.clone(),
+                        target_branch: default_branch,
+                        title: mr_title,
+                        description: mr_body,
+                        labels,
+                        assignee_ids: self.config.merge_request.assignees.clone(),
+                        merge_when_pipeline_succeeds: None,
+                    },
+                )
+                .await
+            {
+                Ok(mr) => info!(
+                    "[replacement] Created migration MR !{}: {}",
+                    mr.iid, mr.web_url
+                ),
                 Err(e) => warn!("[replacement] Failed to create migration MR: {}", e),
             }
         } else {
-            info!("[replacement] Local mode: migration branch '{}' created for {} → {}", branch_name, from_ref, to_ref);
+            info!(
+                "[replacement] Local mode: migration branch '{}' created for {} → {}",
+                branch_name, from_ref, to_ref
+            );
         }
     }
 
@@ -954,25 +1179,58 @@ impl Orchestrator {
         let mut h = DefaultHasher::new();
         from_ref.hash(&mut h);
         to_ref.hash(&mut h);
-        let branch_name = format!("{}replace-{}-{:08x}", self.config.merge_request.branch_prefix, dep_name.replace('/', "-"), h.finish() as u32);
+        let branch_name = format!(
+            "{}replace-{}-{:08x}",
+            self.config.merge_request.branch_prefix,
+            dep_name.replace('/', "-"),
+            h.finish() as u32
+        );
 
         match source.branch_exists(&branch_name).await {
-            Ok(true) => { info!("[replacement] Branch {} already exists, skipping", branch_name); return None; }
+            Ok(true) => {
+                info!(
+                    "[replacement] Branch {} already exists, skipping",
+                    branch_name
+                );
+                return None;
+            }
             Ok(false) => {}
-            Err(e) => { warn!("[replacement] Could not check branch existence: {}", e); return None; }
+            Err(e) => {
+                warn!("[replacement] Could not check branch existence: {}", e);
+                return None;
+            }
         }
 
         let default_branch = match source.default_branch().await {
             Ok(b) => b,
-            Err(e) => { warn!("[replacement] Could not get default branch: {}", e); return None; }
+            Err(e) => {
+                warn!("[replacement] Could not get default branch: {}", e);
+                return None;
+            }
         };
         if let Err(e) = source.create_branch(&branch_name, &default_branch).await {
-            warn!("[replacement] Failed to create branch {}: {}", branch_name, e); return None;
+            warn!(
+                "[replacement] Failed to create branch {}: {}",
+                branch_name, e
+            );
+            return None;
         }
         let file_update = updater::apply_replacement(file_content, file_path, from_ref, to_ref);
         let commit_msg = format!("chore(deps): migrate {dep_name} from {from_ref} to {to_ref}");
-        if let Err(e) = source.commit_file(&branch_name, &file_update.file_path, &file_update.updated_content, &commit_msg).await {
-            warn!("[replacement] Failed to commit migration for {}: {}", dep_name, e); return None;
+        if let Err(e) = source
+            .commit_file(
+                &branch_name,
+                &file_update.file_path,
+                &file_update.updated_content,
+                &commit_msg,
+            )
+            .await
+        {
+            warn!(
+                "[replacement] Failed to commit migration for {}: {}",
+                dep_name, e
+            );
+            return None;
         }
         Some((branch_name, default_branch))
     }
@@ -996,7 +1254,13 @@ impl Orchestrator {
     fn branch_name_for_group(&self, group_name: &str) -> String {
         let sanitized = group_name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' {
+                    c
+                } else {
+                    '-'
+                }
+            })
             .collect::<String>();
         // Use a short hash of the name to guarantee uniqueness even after sanitization.
         let hash = {
@@ -1006,11 +1270,15 @@ impl Orchestrator {
             group_name.hash(&mut h);
             format!("{:08x}", h.finish() as u32)
         };
-        format!("{}group-{}-{}", self.config.merge_request.branch_prefix, sanitized, hash)
+        format!(
+            "{}group-{}-{}",
+            self.config.merge_request.branch_prefix, sanitized, hash
+        )
     }
 
     fn matches_any_pattern(&self, path: &str) -> bool {
-        self.scanner.managers
+        self.scanner
+            .managers
             .iter()
             .enumerate()
             .any(|(idx, m)| self.file_matches_manager_at(path, m.as_ref(), idx))
@@ -1018,14 +1286,20 @@ impl Orchestrator {
 
     fn file_matches_manager(&self, path: &str, manager: &dyn PackageManager) -> bool {
         let idx = self
-            .scanner.managers
+            .scanner
+            .managers
             .iter()
             .position(|m| std::ptr::eq(std::ptr::from_ref(m.as_ref()), std::ptr::from_ref(manager)))
             .unwrap_or(usize::MAX);
         self.file_matches_manager_at(path, manager, idx)
     }
 
-    fn file_matches_manager_at(&self, path: &str, manager: &dyn PackageManager, idx: usize) -> bool {
+    fn file_matches_manager_at(
+        &self,
+        path: &str,
+        manager: &dyn PackageManager,
+        idx: usize,
+    ) -> bool {
         let static_patterns = manager.file_patterns();
 
         if !static_patterns.is_empty() {
@@ -1086,7 +1360,9 @@ impl Orchestrator {
             if !seen.insert(key) {
                 debug!(
                     "Dedup: skipping duplicate candidate {} {} (from {})",
-                    candidate.dependency.name, candidate.new_version.original_tag, candidate.dependency.file_path,
+                    candidate.dependency.name,
+                    candidate.new_version.original_tag,
+                    candidate.dependency.file_path,
                 );
                 continue;
             }
@@ -1106,9 +1382,10 @@ impl Orchestrator {
                     RegistrySource::OciHelmRegistry { .. } => "helm",
                 };
                 let registry = match &c.dependency.registry {
-                    RegistrySource::DockerRegistry { registry, .. } => {
-                        registry.as_deref().unwrap_or("registry-1.docker.io").to_string()
-                    }
+                    RegistrySource::DockerRegistry { registry, .. } => registry
+                        .as_deref()
+                        .unwrap_or("registry-1.docker.io")
+                        .to_string(),
                     RegistrySource::HelmRepository { repo_url, .. } => repo_url.clone(),
                     RegistrySource::OciHelmRegistry { registry, .. } => {
                         registry.as_deref().unwrap_or("").to_string()
@@ -1125,7 +1402,10 @@ impl Orchestrator {
             })
             .collect();
 
-        println!("{}", serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".to_string()));
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".to_string())
+        );
     }
 
     fn print_dry_run_report(&self, candidates: &[UpdateCandidate]) {
@@ -1177,7 +1457,10 @@ async fn rebase_single_local_branch(
         Err(_) => return,
     };
     // exit 0: default_branch is an ancestor of branch (up to date); exit 1: branch is behind
-    let is_behind = repo.run(&["merge-base", "--is-ancestor", default_branch, branch]).await.is_err();
+    let is_behind = repo
+        .run(&["merge-base", "--is-ancestor", default_branch, branch])
+        .await
+        .is_err();
 
     let _ = repo.checkout(default_branch).await;
     let has_conflicts = match repo.has_conflicts(branch).await {
@@ -1193,21 +1476,30 @@ async fn rebase_single_local_branch(
     if !is_behind && !has_conflicts {
         return;
     }
-    info!("Local branch '{}' is stale (behind={}, conflicts={}) — applying strategy '{:?}'", branch, is_behind, has_conflicts, strategy);
+    info!(
+        "Local branch '{}' is stale (behind={}, conflicts={}) — applying strategy '{:?}'",
+        branch, is_behind, has_conflicts, strategy
+    );
 
     match strategy {
         StaleMrStrategy::Rebase => {
             if let Err(e) = repo.rebase(branch, default_branch).await {
                 warn!("Failed to rebase local branch '{}': {}", branch, e);
             } else {
-                info!("Rebased local branch '{}' onto '{}'", branch, default_branch);
+                info!(
+                    "Rebased local branch '{}' onto '{}'",
+                    branch, default_branch
+                );
             }
         }
         StaleMrStrategy::Recreate => {
             if let Err(e) = repo.run(&["branch", "-D", branch]).await {
                 warn!("Failed to delete local branch '{}': {}", branch, e);
             } else {
-                info!("Deleted stale local branch '{}' (will be recreated on next scan)", branch);
+                info!(
+                    "Deleted stale local branch '{}' (will be recreated on next scan)",
+                    branch
+                );
             }
         }
         StaleMrStrategy::Ignore => {}
@@ -1240,7 +1532,12 @@ mod tests {
         Orchestrator::new(config, true, false, false).unwrap()
     }
 
-    fn make_candidate(name: &str, current: &str, new_ver: &str, file_path: &str) -> UpdateCandidate {
+    fn make_candidate(
+        name: &str,
+        current: &str,
+        new_ver: &str,
+        file_path: &str,
+    ) -> UpdateCandidate {
         UpdateCandidate {
             dependency: Dependency {
                 name: name.to_string(),

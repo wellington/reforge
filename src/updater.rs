@@ -58,15 +58,16 @@ pub fn apply_update(
         UpdateContext::DockerFrom {
             line_number,
             full_reference: _,
-        } => {
-            update_line_based(file_content, *line_number, &dependency.current_version, new_version)
-        }
+        } => update_line_based(
+            file_content,
+            *line_number,
+            &dependency.current_version,
+            new_version,
+        ),
         UpdateContext::YamlKeyPath { keys: _ } => {
             update_yaml_value(file_content, &dependency.current_version, new_version)
         }
-        UpdateContext::DockerComposeImage {
-            full_reference, ..
-        } => {
+        UpdateContext::DockerComposeImage { full_reference, .. } => {
             let old_ref = full_reference;
             let new_ref = old_ref.replace(&dependency.current_version, new_version);
             file_content.replace(old_ref, &new_ref)
@@ -239,7 +240,9 @@ mod tests {
             "docker.io/nginxinc/nginx-unprivileged:1.25",
         );
         assert!(result.updated_content.contains("nginx-unprivileged"));
-        assert!(!result.updated_content.contains("docker.io/library/nginx:1.25"));
+        assert!(!result
+            .updated_content
+            .contains("docker.io/library/nginx:1.25"));
     }
 
     #[test]

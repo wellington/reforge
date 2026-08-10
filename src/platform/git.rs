@@ -165,11 +165,7 @@ impl GitRepo {
     pub async fn log(&self, max_count: usize) -> Result<Vec<LogEntry>> {
         let n = max_count.to_string();
         let out = self
-            .run(&[
-                "log",
-                &format!("-{n}"),
-                "--pretty=format:%H\t%s",
-            ])
+            .run(&["log", &format!("-{n}"), "--pretty=format:%H\t%s"])
             .await?;
 
         let entries = out
@@ -225,7 +221,11 @@ impl GitRepo {
 
         // Always try to return to the original branch, even on error.
         if let Err(e) = self.checkout(&original).await {
-            tracing::warn!("Failed to restore branch '{}' after rebase: {}", original, e);
+            tracing::warn!(
+                "Failed to restore branch '{}' after rebase: {}",
+                original,
+                e
+            );
         }
 
         result.map(|_| ())
@@ -407,10 +407,7 @@ mod tests {
         let (_dir, repo) = init_repo().await;
         repo.write_file("new.txt", "content\n").await.unwrap();
         repo.run(&["add", "new.txt"]).await.unwrap();
-        let out = repo
-            .run(&["commit", "-m", "add new.txt"])
-            .await
-            .unwrap();
+        let out = repo.run(&["commit", "-m", "add new.txt"]).await.unwrap();
         assert!(!out.is_empty());
 
         let log = repo.log(2).await.unwrap();
@@ -497,7 +494,9 @@ mod tests {
         // Create a side branch that touches a different file.
         repo.create_branch("side/no-conflict", &base).await.unwrap();
         repo.write_file("side.txt", "side content\n").await.unwrap();
-        repo.add_and_commit("side.txt", "side: add file").await.unwrap();
+        repo.add_and_commit("side.txt", "side: add file")
+            .await
+            .unwrap();
 
         // Return to base — merging side/no-conflict should have no conflicts.
         repo.checkout(&base).await.unwrap();

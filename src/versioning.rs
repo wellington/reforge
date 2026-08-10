@@ -41,11 +41,7 @@ impl VersionPolicy {
 
     /// Given a current version and available versions, return the best update candidate.
     /// Returns None if already up to date.
-    pub fn best_update(
-        &self,
-        current: &Version,
-        available: &[VersionInfo],
-    ) -> Option<VersionInfo> {
+    pub fn best_update(&self, current: &Version, available: &[VersionInfo]) -> Option<VersionInfo> {
         let mut candidates: Vec<&VersionInfo> = available
             .iter()
             .filter(|v| {
@@ -86,12 +82,7 @@ mod tests {
     fn test_semver_minor_picks_latest_minor() {
         let policy = VersionPolicy::new(PinStrategy::SemverMinor);
         let current = Version::parse("1.25.0").unwrap();
-        let available = vec![
-            vi("1.25.1"),
-            vi("1.26.0"),
-            vi("1.24.0"),
-            vi("2.0.0"),
-        ];
+        let available = vec![vi("1.25.1"), vi("1.26.0"), vi("1.24.0"), vi("2.0.0")];
 
         let best = policy.best_update(&current, &available).unwrap();
         assert_eq!(best.version, Version::parse("1.26.0").unwrap());

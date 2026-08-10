@@ -14,9 +14,8 @@ pub struct DockerManager;
 
 /// Matches `FROM` instructions, capturing the image reference.
 static FROM_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?i)^FROM\s+(?:--platform=\S+\s+)?(?P<reference>[^\s]+)\s*(?:AS\s+\S+)?$"
-    ).expect("FROM_RE is a valid regex")
+    Regex::new(r"(?i)^FROM\s+(?:--platform=\S+\s+)?(?P<reference>[^\s]+)\s*(?:AS\s+\S+)?$")
+        .expect("FROM_RE is a valid regex")
 });
 
 /// Matches `ARG` instructions that define image references with tags.
@@ -40,11 +39,7 @@ impl DockerManager {
         crate::util::parse_image_reference(image)
     }
 
-    fn extract_dockerfile_deps(
-        &self,
-        file_path: &str,
-        contents: &str,
-    ) -> Result<Vec<Dependency>> {
+    fn extract_dockerfile_deps(&self, file_path: &str, contents: &str) -> Result<Vec<Dependency>> {
         let mut deps = Vec::new();
         let mut arg_vars: std::collections::HashMap<String, (String, String, usize)> =
             std::collections::HashMap::new();
@@ -57,10 +52,7 @@ impl DockerManager {
                 let var_name = caps[1].to_string();
                 let image_part = caps[2].to_string();
                 if let Some(tag) = caps.name("tag") {
-                    arg_vars.insert(
-                        var_name,
-                        (image_part, tag.as_str().to_string(), line_num),
-                    );
+                    arg_vars.insert(var_name, (image_part, tag.as_str().to_string(), line_num));
                 }
                 continue;
             }
@@ -126,17 +118,12 @@ impl DockerManager {
         Ok(deps)
     }
 
-    fn extract_compose_deps(
-        &self,
-        file_path: &str,
-        contents: &str,
-    ) -> Result<Vec<Dependency>> {
-        let yaml: serde_yaml::Value = serde_yaml::from_str(contents).map_err(|e| {
-            ReforgeError::Parse {
+    fn extract_compose_deps(&self, file_path: &str, contents: &str) -> Result<Vec<Dependency>> {
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(contents).map_err(|e| ReforgeError::Parse {
                 file: file_path.to_string(),
                 reason: format!("YAML parse error: {e}"),
-            }
-        })?;
+            })?;
 
         let mut deps = Vec::new();
 
@@ -216,10 +203,7 @@ impl PackageManager for DockerManager {
     }
 
     fn extract_dependencies(&self, file_path: &str, contents: &str) -> Result<Vec<Dependency>> {
-        let filename = file_path
-            .rsplit('/')
-            .next()
-            .unwrap_or(file_path);
+        let filename = file_path.rsplit('/').next().unwrap_or(file_path);
 
         if filename.starts_with("Dockerfile") {
             self.extract_dockerfile_deps(file_path, contents)
@@ -302,8 +286,7 @@ mod tests {
     #[test]
     fn test_digest_only_skipped() {
         let mgr = DockerManager::new();
-        let contents =
-            "FROM nginx@sha256:abc123def456\n";
+        let contents = "FROM nginx@sha256:abc123def456\n";
         let deps = mgr.extract_dependencies("Dockerfile", contents).unwrap();
         assert_eq!(deps.len(), 0);
     }

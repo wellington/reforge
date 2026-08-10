@@ -31,16 +31,10 @@ impl HelmManager {
         Self
     }
 
-    fn extract_chart_yaml_deps(
-        &self,
-        file_path: &str,
-        contents: &str,
-    ) -> Result<Vec<Dependency>> {
-        let chart: ChartYaml = serde_yaml::from_str(contents).map_err(|e| {
-            ReforgeError::Parse {
-                file: file_path.to_string(),
-                reason: format!("Chart.yaml parse error: {e}"),
-            }
+    fn extract_chart_yaml_deps(&self, file_path: &str, contents: &str) -> Result<Vec<Dependency>> {
+        let chart: ChartYaml = serde_yaml::from_str(contents).map_err(|e| ReforgeError::Parse {
+            file: file_path.to_string(),
+            reason: format!("Chart.yaml parse error: {e}"),
         })?;
 
         let mut deps = Vec::new();
@@ -62,9 +56,7 @@ impl HelmManager {
                         repo_url: dep.repository.clone(),
                         chart_name: dep.name.clone(),
                     }
-                } else if dep.repository.starts_with("alias:")
-                    || dep.repository.starts_with('@')
-                {
+                } else if dep.repository.starts_with("alias:") || dep.repository.starts_with('@') {
                     warn!(
                         "Skipping alias-based repository for {}: {}",
                         dep.name, dep.repository
@@ -97,17 +89,12 @@ impl HelmManager {
         Ok(deps)
     }
 
-    fn extract_values_yaml_deps(
-        &self,
-        file_path: &str,
-        contents: &str,
-    ) -> Result<Vec<Dependency>> {
-        let yaml: serde_yaml::Value = serde_yaml::from_str(contents).map_err(|e| {
-            ReforgeError::Parse {
+    fn extract_values_yaml_deps(&self, file_path: &str, contents: &str) -> Result<Vec<Dependency>> {
+        let yaml: serde_yaml::Value =
+            serde_yaml::from_str(contents).map_err(|e| ReforgeError::Parse {
                 file: file_path.to_string(),
                 reason: format!("values.yaml parse error: {e}"),
-            }
-        })?;
+            })?;
 
         let mut deps = Vec::new();
         self.walk_yaml_for_images(&yaml, &mut Vec::new(), file_path, &mut deps);
@@ -132,9 +119,7 @@ impl HelmManager {
                     .or_else(|| map.get(serde_yaml::Value::String("version".to_string())));
 
                 if let (Some(repo), Some(tag)) = (repo_val, tag_val) {
-                    if let (Some(repo_str), Some(tag_str)) =
-                        (repo.as_str(), tag_as_string(tag))
-                    {
+                    if let (Some(repo_str), Some(tag_str)) = (repo.as_str(), tag_as_string(tag)) {
                         let (registry, image_name) = parse_docker_image(repo_str);
                         let mut key_path = path.clone();
                         // Determine which key name has the tag
