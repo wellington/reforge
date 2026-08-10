@@ -17,5 +17,8 @@ run-reforge: build
 validate:
 	@qa/scripts/validate.sh
 
+check:
+	cargo check --all-targets
+
 lint:
 	cargo clippy --fix --bin reforge -- -W clippy::pedantic
