@@ -44,7 +44,7 @@ impl RegexManager {
             Datasource::Docker => {
                 let registry = effective_registry.clone();
                 let image = match &registry {
-                    Some(reg) => format!("{}/{}", reg, dep_name),
+                    Some(reg) => format!("{reg}/{dep_name}"),
                     None => dep_name.to_string(),
                 };
                 RegistrySource::DockerRegistry { image, registry }
@@ -53,7 +53,7 @@ impl RegexManager {
                 let image = match &effective_registry {
                     Some(reg) => {
                         let reg = reg.trim_start_matches("oci://");
-                        format!("{}/{}", reg, dep_name)
+                        format!("{reg}/{dep_name}")
                     }
                     None => dep_name.to_string(),
                 };

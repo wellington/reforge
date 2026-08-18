@@ -36,7 +36,7 @@ impl GitRepo {
             .current_dir(dir)
             .output()
             .await
-            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git: {}", e)))?;
+            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git: {e}")))?;
 
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
@@ -72,7 +72,7 @@ impl GitRepo {
             .args(["clone", url, dest_str])
             .output()
             .await
-            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git clone: {}", e)))?;
+            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git clone: {e}")))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -124,11 +124,11 @@ impl GitRepo {
     /// Check whether a branch exists locally.
     pub async fn branch_exists(&self, branch: &str) -> Result<bool> {
         let output = Command::new("git")
-            .args(["rev-parse", "--verify", &format!("refs/heads/{}", branch)])
+            .args(["rev-parse", "--verify", &format!("refs/heads/{branch}")])
             .current_dir(&self.path)
             .output()
             .await
-            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git: {}", e)))?;
+            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git: {e}")))?;
         Ok(output.status.success())
     }
 
@@ -167,7 +167,7 @@ impl GitRepo {
         let out = self
             .run(&[
                 "log",
-                &format!("-{}", n),
+                &format!("-{n}"),
                 "--pretty=format:%H\t%s",
             ])
             .await?;
@@ -192,7 +192,7 @@ impl GitRepo {
         Ok(out
             .lines()
             .filter(|l| !l.is_empty())
-            .map(|l| l.to_string())
+            .map(std::string::ToString::to_string)
             .collect())
     }
 
@@ -241,7 +241,7 @@ impl GitRepo {
             .current_dir(&self.path)
             .output()
             .await
-            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git merge: {}", e)))?;
+            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git merge: {e}")))?;
 
         // Always abort so the working tree is left clean.
         let _ = self.run(&["merge", "--abort"]).await;
@@ -254,7 +254,7 @@ impl GitRepo {
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{}{}", stdout, stderr);
+        let combined = format!("{stdout}{stderr}");
 
         if combined.to_ascii_lowercase().contains("conflict") {
             return Ok(true);
@@ -275,7 +275,7 @@ impl GitRepo {
             .current_dir(&self.path)
             .output()
             .await
-            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git: {}", e)))?;
+            .map_err(|e| ReforgeError::Git(format!("Failed to spawn git: {e}")))?;
 
         if output.status.success() {
             Ok(())

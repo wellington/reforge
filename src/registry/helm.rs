@@ -27,7 +27,7 @@ struct HelmChartEntry {
 impl HelmRegistryClient {
     pub fn new(credentials: HashMap<String, RegistryCredential>) -> crate::error::Result<Self> {
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_mins(1))
             .build()?;
 
         let docker_client = DockerRegistryClient::new(credentials.clone())?;
@@ -64,7 +64,7 @@ impl HelmRegistryClient {
 
         let resp = req.send().await.map_err(|e| ReforgeError::Registry {
             registry: repo_url.to_string(),
-            message: format!("Failed to fetch index.yaml: {}", e),
+            message: format!("Failed to fetch index.yaml: {e}"),
         })?;
 
         if !resp.status().is_success() {
@@ -78,13 +78,13 @@ impl HelmRegistryClient {
         let index: HelmIndex =
             serde_yaml::from_str(&body).map_err(|e| ReforgeError::Registry {
                 registry: repo_url.to_string(),
-                message: format!("Failed to parse index.yaml: {}", e),
+                message: format!("Failed to parse index.yaml: {e}"),
             })?;
 
         let entries = index.entries.get(chart_name).ok_or_else(|| {
             ReforgeError::Registry {
                 registry: repo_url.to_string(),
-                message: format!("Chart '{}' not found in index", chart_name),
+                message: format!("Chart '{chart_name}' not found in index"),
             }
         })?;
 

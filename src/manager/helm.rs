@@ -39,7 +39,7 @@ impl HelmManager {
         let chart: ChartYaml = serde_yaml::from_str(contents).map_err(|e| {
             ReforgeError::Parse {
                 file: file_path.to_string(),
-                reason: format!("Chart.yaml parse error: {}", e),
+                reason: format!("Chart.yaml parse error: {e}"),
             }
         })?;
 
@@ -105,7 +105,7 @@ impl HelmManager {
         let yaml: serde_yaml::Value = serde_yaml::from_str(contents).map_err(|e| {
             ReforgeError::Parse {
                 file: file_path.to_string(),
-                reason: format!("values.yaml parse error: {}", e),
+                reason: format!("values.yaml parse error: {e}"),
             }
         })?;
 

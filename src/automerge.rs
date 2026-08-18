@@ -83,7 +83,7 @@ impl<'a> AutomergeEvaluator<'a> {
             if let Some(min_age) = policy.minimum_age_days {
                 if let Some(created_at) = mr_created_at {
                     let age_days = (Utc::now() - created_at).num_days();
-                    if age_days < min_age as i64 {
+                    if age_days < i64::from(min_age) {
                         return false;
                     }
                 }

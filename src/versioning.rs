@@ -1,9 +1,9 @@
 //! Version pinning strategies and update policies.
 //!
 //! This module defines how reforge selects which updates to propose:
-//! - **SemverPatch**: Only patch updates (1.2.3 → 1.2.4)
-//! - **SemverMinor**: Minor and patch updates (1.2.3 → 1.3.0)
-//! - **SemverMajor**: Any update including major versions (1.2.3 → 2.0.0)
+//! - **`SemverPatch`**: Only patch updates (1.2.3 → 1.2.4)
+//! - **`SemverMinor`**: Minor and patch updates (1.2.3 → 1.3.0)
+//! - **`SemverMajor`**: Any update including major versions (1.2.3 → 2.0.0)
 //!
 //! Pre-release versions are always skipped.
 
@@ -57,7 +57,7 @@ impl VersionPolicy {
             .collect();
 
         candidates.sort_by(|a, b| b.version.cmp(&a.version));
-        candidates.first().cloned().cloned()
+        candidates.first().copied().cloned()
     }
 
     fn matches_strategy(&self, current: &Version, candidate: &Version) -> bool {

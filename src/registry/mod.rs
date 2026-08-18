@@ -63,8 +63,8 @@ pub fn parse_version_lenient(tag: &str) -> Option<semver::Version> {
     semver::Version::parse(cleaned).ok().or_else(|| {
         let parts: Vec<&str> = cleaned.split('.').collect();
         match parts.len() {
-            1 => semver::Version::parse(&format!("{}.0.0", cleaned)).ok(),
-            2 => semver::Version::parse(&format!("{}.0", cleaned)).ok(),
+            1 => semver::Version::parse(&format!("{cleaned}.0.0")).ok(),
+            2 => semver::Version::parse(&format!("{cleaned}.0")).ok(),
             _ => None,
         }
     })

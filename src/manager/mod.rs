@@ -54,7 +54,7 @@ pub enum RegistrySource {
     },
     /// A Helm chart hosted in an HTTP-based chart repository.
     HelmRepository {
-        /// Base URL of the repository (e.g., "https://charts.bitnami.com/bitnami").
+        /// Base URL of the repository (e.g., "<https://charts.bitnami.com/bitnami>").
         repo_url: String,
         /// Name of the chart within the repository.
         chart_name: String,

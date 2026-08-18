@@ -95,7 +95,7 @@ impl DockerManager {
                     file_path: file_path.to_string(),
                     update_context: UpdateContext::DockerFrom {
                         line_number: line_num,
-                        full_reference: format!("{}:{}", image, tag),
+                        full_reference: format!("{image}:{tag}"),
                     },
                 });
             }
@@ -105,7 +105,7 @@ impl DockerManager {
         for (var_name, _from_line) in &from_var_refs {
             if let Some((image, tag, arg_line)) = arg_vars.get(var_name) {
                 let (registry, image_name) = Self::parse_image_reference(image);
-                let full_ref = format!("{}:{}", image, tag);
+                let full_ref = format!("{image}:{tag}");
 
                 deps.push(Dependency {
                     name: image_name.clone(),
@@ -134,7 +134,7 @@ impl DockerManager {
         let yaml: serde_yaml::Value = serde_yaml::from_str(contents).map_err(|e| {
             ReforgeError::Parse {
                 file: file_path.to_string(),
-                reason: format!("YAML parse error: {}", e),
+                reason: format!("YAML parse error: {e}"),
             }
         })?;
 

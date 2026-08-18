@@ -37,7 +37,7 @@ pub struct ChartLockDependency {
 pub fn parse_chart_lock(contents: &str) -> Result<ChartLock> {
     serde_yaml::from_str(contents).map_err(|e| ReforgeError::Parse {
         file: "Chart.lock".to_string(),
-        reason: format!("Failed to parse Chart.lock: {}", e),
+        reason: format!("Failed to parse Chart.lock: {e}"),
     })
 }
 
@@ -65,13 +65,13 @@ pub fn generate_chart_lock(
     let mut lines = Vec::new();
     lines.push("dependencies:".to_string());
     for dep in deps {
-        lines.push(format!("- digest: {}", digests.get(&dep.name).map(String::as_str).unwrap_or("")));
+        lines.push(format!("- digest: {}", digests.get(&dep.name).map_or("", String::as_str)));
         lines.push(format!("  name: {}", dep.name));
         lines.push(format!("  repository: {}", dep.repository));
         lines.push(format!("  version: {}", dep.version));
     }
-    lines.push(format!("digest: sha256:{}", overall_digest));
-    lines.push(format!("generated: \"{}\"", generated));
+    lines.push(format!("digest: sha256:{overall_digest}"));
+    lines.push(format!("generated: \"{generated}\""));
     lines.push(String::new());
 
     lines.join("\n")
@@ -123,8 +123,8 @@ pub fn update_chart_lock(
             // Check if this block belongs to the target dependency.
             let is_target = block_lines.iter().any(|bl| {
                 let t = bl.trim();
-                t == format!("name: {}", updated_dep_name)
-                    || t.starts_with(&format!("name: {}", updated_dep_name))
+                t == format!("name: {updated_dep_name}")
+                    || t.starts_with(&format!("name: {updated_dep_name}"))
             });
 
             if is_target {
@@ -204,7 +204,7 @@ async fn fetch_helm_http_digest(
         .await
         .map_err(|e| ReforgeError::Registry {
             registry: repo_url.to_string(),
-            message: format!("Failed to fetch index.yaml: {}", e),
+            message: format!("Failed to fetch index.yaml: {e}"),
         })?;
 
     if !index_resp.status().is_success() {
@@ -227,7 +227,7 @@ async fn fetch_helm_http_digest(
         .await
         .map_err(|e| ReforgeError::Registry {
             registry: repo_url.to_string(),
-            message: format!("Failed to download chart: {}", e),
+            message: format!("Failed to download chart: {e}"),
         })?;
 
     if !chart_resp.status().is_success() {
@@ -239,7 +239,7 @@ async fn fetch_helm_http_digest(
 
     let bytes = chart_resp.bytes().await?;
     let digest = sha256_hex(&bytes);
-    Ok(format!("sha256:{}", digest))
+    Ok(format!("sha256:{digest}"))
 }
 
 fn extract_chart_url_from_index(
@@ -251,7 +251,7 @@ fn extract_chart_url_from_index(
     let index: serde_yaml::Value =
         serde_yaml::from_str(index_yaml).map_err(|e| ReforgeError::Parse {
             file: "index.yaml".to_string(),
-            reason: format!("Failed to parse index.yaml: {}", e),
+            reason: format!("Failed to parse index.yaml: {e}"),
         })?;
 
     let entries = index
@@ -260,7 +260,7 @@ fn extract_chart_url_from_index(
         .and_then(|e| e.as_sequence())
         .ok_or_else(|| ReforgeError::Registry {
             registry: repo_url.to_string(),
-            message: format!("Chart '{}' not found in index", chart_name),
+            message: format!("Chart '{chart_name}' not found in index"),
         })?;
 
     for entry in entries {
@@ -287,7 +287,7 @@ fn extract_chart_url_from_index(
 
     Err(ReforgeError::Registry {
         registry: repo_url.to_string(),
-        message: format!("Version '{}' of chart '{}' not found in index", version, chart_name),
+        message: format!("Version '{version}' of chart '{chart_name}' not found in index"),
     })
 }
 
@@ -309,8 +309,7 @@ async fn fetch_oci_digest(
     };
 
     let manifest_url = format!(
-        "https://{}/v2/{}/manifests/{}",
-        registry_host, repo_path, version
+        "https://{registry_host}/v2/{repo_path}/manifests/{version}"
     );
 
     debug!("Fetching OCI manifest from {}", manifest_url);
@@ -325,14 +324,14 @@ async fn fetch_oci_digest(
         .await
         .map_err(|e| ReforgeError::Registry {
             registry: registry_host.to_string(),
-            message: format!("Failed to fetch OCI manifest: {}", e),
+            message: format!("Failed to fetch OCI manifest: {e}"),
         })?;
 
     // The `Docker-Content-Digest` header contains the digest.
     if let Some(digest) = resp.headers().get("Docker-Content-Digest") {
         return digest
             .to_str()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .map_err(|_| ReforgeError::Registry {
                 registry: registry_host.to_string(),
                 message: "Invalid Docker-Content-Digest header".to_string(),

@@ -31,17 +31,12 @@ pub enum StaleMrStrategy {
 
 /// An open MR that may be stale.
 #[derive(Debug, Clone)]
+// dont warn on unused fields in api contract
+#[allow(dead_code)]
 pub struct StaleMr {
     pub mr: MergeRequest,
     pub has_conflicts: bool,
     pub is_behind: bool,
-}
-
-impl StaleMr {
-    /// Returns true if any remediation is warranted.
-    pub fn needs_action(&self) -> bool {
-        self.has_conflicts || self.is_behind
-    }
 }
 
 /// Checks open reforge MRs for staleness (conflicts or divergence).
@@ -60,10 +55,7 @@ impl StalenessChecker {
         project: &str,
         branch_prefix: &str,
     ) -> Vec<StaleMr> {
-        let mrs = match gitlab
-            .list_open_mrs(project, Some(branch_prefix))
-            .await
-        {
+        let mrs = match gitlab.list_open_mrs(project, Some(branch_prefix)).await {
             Ok(mrs) => mrs,
             Err(e) => {
                 warn!("Failed to list open MRs for staleness check: {}", e);
@@ -154,10 +146,7 @@ pub async fn recreate_mr_branch(
         )
         .await?;
 
-    info!(
-        "Branch '{}' recreated for MR !{}",
-        mr.source_branch, mr.iid
-    );
+    info!("Branch '{}' recreated for MR !{}", mr.source_branch, mr.iid);
     Ok(())
 }
 
@@ -231,47 +220,14 @@ mod tests {
         assert_eq!(w.strategy, StaleMrStrategy::Ignore);
     }
 
-    #[test]
-    fn test_stale_mr_needs_action_conflicts() {
-        let mr = make_mr();
-        let stale = StaleMr {
-            mr,
-            has_conflicts: true,
-            is_behind: false,
-        };
-        assert!(stale.needs_action());
-    }
-
-    #[test]
-    fn test_stale_mr_needs_action_behind() {
-        let mr = make_mr();
-        let stale = StaleMr {
-            mr,
-            has_conflicts: false,
-            is_behind: true,
-        };
-        assert!(stale.needs_action());
-    }
-
-    #[test]
-    fn test_stale_mr_no_action_needed() {
-        let mr = make_mr();
-        let stale = StaleMr {
-            mr,
-            has_conflicts: false,
-            is_behind: false,
-        };
-        assert!(!stale.needs_action());
-    }
-
-    fn make_mr() -> MergeRequest {
-        MergeRequest {
-            iid: 1,
-            title: "test".to_string(),
-            source_branch: "reforge/test".to_string(),
-            target_branch: "main".to_string(),
-            state: "opened".to_string(),
-            web_url: "https://gitlab.example.com/mr/1".to_string(),
-        }
-    }
+    // fn make_mr() -> MergeRequest {
+    //     MergeRequest {
+    //         iid: 1,
+    //         title: "test".to_string(),
+    //         source_branch: "reforge/test".to_string(),
+    //         target_branch: "main".to_string(),
+    //         state: "opened".to_string(),
+    //         web_url: "https://gitlab.example.com/mr/1".to_string(),
+    //     }
+    // }
 }

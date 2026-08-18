@@ -22,7 +22,9 @@ pub struct GitLabClient {
     token: String,
 }
 
+// Ignore dead code as we're mirroring api shape
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct TreeEntry {
     pub id: String,
     pub name: String,
@@ -32,6 +34,8 @@ pub struct TreeEntry {
     pub mode: String,
 }
 
+// Ignore dead code for API shape
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CommitActionKind {
@@ -71,7 +75,9 @@ pub struct UpdateMrParams {
     pub state_event: Option<String>,
 }
 
+// Ignore dead code for API shape
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct MergeRequest {
     pub iid: u64,
     pub title: String,
@@ -83,6 +89,8 @@ pub struct MergeRequest {
 
 /// Extended MR view that includes conflict and staleness fields.
 #[derive(Debug, Clone, Deserialize)]
+// Ignore dead code for API shape
+#[allow(dead_code)]
 pub struct MrDetail {
     pub iid: u64,
     pub title: String,
@@ -133,11 +141,7 @@ impl GitLabClient {
         project.replace('/', "%2F")
     }
 
-    fn build_request(
-        &self,
-        method: reqwest::Method,
-        url: &str,
-    ) -> reqwest::RequestBuilder {
+    fn build_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
         self.client
             .request(method, url)
             .header(PRIVATE_TOKEN, &self.token)
@@ -194,20 +198,15 @@ impl GitLabClient {
             }
         }
 
-        Err(last_err.map(ReforgeError::Http).unwrap_or_else(|| {
-            ReforgeError::Config("Max retries exceeded".into())
-        }))
+        Err(last_err.map_or_else(
+            || ReforgeError::Config("Max retries exceeded".into()),
+            ReforgeError::Http,
+        ))
     }
 
     pub async fn get_default_branch(&self, project: &str) -> Result<String> {
-        let url = self.api_url(&format!(
-            "/projects/{}",
-            Self::encode_project(project)
-        ));
-        let req = self
-            .client
-            .get(&url)
-            .header(PRIVATE_TOKEN, &self.token);
+        let url = self.api_url(&format!("/projects/{}", Self::encode_project(project)));
+        let req = self.client.get(&url).header(PRIVATE_TOKEN, &self.token);
 
         let resp = self.send_with_retry(req).await?;
         let info: ProjectInfo = resp.json().await?;
@@ -235,7 +234,7 @@ impl GitLabClient {
                 page,
             );
             if let Some(p) = path {
-                url.push_str(&format!("&path={}", p));
+                url.push_str(&format!("&path={p}"));
             }
             if recursive {
                 url.push_str("&recursive=true");
@@ -263,12 +262,7 @@ impl GitLabClient {
         Ok(entries)
     }
 
-    pub async fn get_file(
-        &self,
-        project: &str,
-        path: &str,
-        ref_: &str,
-    ) -> Result<String> {
+    pub async fn get_file(&self, project: &str, path: &str, ref_: &str) -> Result<String> {
         let encoded_path = urlencoding::encode(path);
         let url = self.api_url(&format!(
             "/projects/{}/repository/files/{}?ref={}",
@@ -287,23 +281,18 @@ impl GitLabClient {
                 .decode(file_resp.content.replace('\n', ""))
                 .map_err(|e| ReforgeError::Parse {
                     file: path.to_string(),
-                    reason: format!("Base64 decode failed: {}", e),
+                    reason: format!("Base64 decode failed: {e}"),
                 })?;
             String::from_utf8(decoded).map_err(|e| ReforgeError::Parse {
                 file: path.to_string(),
-                reason: format!("UTF-8 decode failed: {}", e),
+                reason: format!("UTF-8 decode failed: {e}"),
             })
         } else {
             Ok(file_resp.content)
         }
     }
 
-    pub async fn create_branch(
-        &self,
-        project: &str,
-        branch: &str,
-        ref_: &str,
-    ) -> Result<()> {
+    pub async fn create_branch(&self, project: &str, branch: &str, ref_: &str) -> Result<()> {
         let url = self.api_url(&format!(
             "/projects/{}/repository/branches",
             Self::encode_project(project),
@@ -331,10 +320,7 @@ impl GitLabClient {
             encoded_branch,
         ));
 
-        let req = self
-            .client
-            .delete(&url)
-            .header(PRIVATE_TOKEN, &self.token);
+        let req = self.client.delete(&url).header(PRIVATE_TOKEN, &self.token);
 
         self.send_with_retry(req).await?;
         debug!("Deleted branch {}", branch);
@@ -349,10 +335,7 @@ impl GitLabClient {
             encoded_branch,
         ));
 
-        let req = self
-            .client
-            .get(&url)
-            .header(PRIVATE_TOKEN, &self.token);
+        let req = self.client.get(&url).header(PRIVATE_TOKEN, &self.token);
 
         let resp = req.send().await?;
         Ok(resp.status().is_success())
@@ -385,11 +368,7 @@ impl GitLabClient {
         Ok(())
     }
 
-    pub async fn create_mr(
-        &self,
-        project: &str,
-        params: CreateMrParams,
-    ) -> Result<MergeRequest> {
+    pub async fn create_mr(&self, project: &str, params: CreateMrParams) -> Result<MergeRequest> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests",
             Self::encode_project(project),
@@ -550,7 +529,7 @@ impl GitLabClient {
         Ok(())
     }
 
-    /// Fetch the detailed view of a single MR (includes has_conflicts and diverged_commits_count).
+    /// Fetch the detailed view of a single MR (includes `has_conflicts` and `diverged_commits_count`).
     pub async fn get_mr_detail(&self, project: &str, mr_iid: u64) -> Result<MrDetail> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}",
@@ -565,7 +544,7 @@ impl GitLabClient {
     }
 
     /// Trigger a GitLab-side rebase of the MR's source branch onto its target branch.
-    /// Uses PUT /projects/:id/merge_requests/:iid/rebase
+    /// Uses PUT /`projects/:id/merge_requests/:iid/rebase`
     pub async fn rebase_mr(&self, project: &str, mr_iid: u64) -> Result<()> {
         let url = self.api_url(&format!(
             "/projects/{}/merge_requests/{}/rebase",
@@ -603,7 +582,7 @@ impl GitLabClient {
                 page,
             );
             if let Some(s) = state {
-                url.push_str(&format!("&state={}", s));
+                url.push_str(&format!("&state={s}"));
             }
             if let Some(title) = search_title {
                 url.push_str(&format!("&search={}", urlencoding::encode(title)));
@@ -688,7 +667,9 @@ impl GitLabClient {
     }
 }
 
+// ignore dead code for API shape
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Issue {
     pub iid: u64,
     pub title: String,
@@ -706,7 +687,7 @@ mod urlencoding {
                     result.push(byte as char);
                 }
                 _ => {
-                    result.push_str(&format!("%{:02X}", byte));
+                    result.push_str(&format!("%{byte:02X}"));
                 }
             }
         }
