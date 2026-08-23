@@ -64,12 +64,6 @@ fn glob_match_inner(pattern: &[char], text: &[char]) -> bool {
 /// Returns the manager name for a registry source.
 ///
 /// Used for branch naming and MR grouping.
-pub fn manager_name(registry: &RegistrySource) -> &'static str {
-    match registry {
-        RegistrySource::DockerRegistry { .. } => "docker",
-        RegistrySource::HelmRepository { .. } | RegistrySource::OciHelmRegistry { .. } => "helm",
-    }
-}
 
 /// Parses a Docker image reference into `(registry, name)` components.
 ///

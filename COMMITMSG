@@ -1,0 +1,11 @@
+fix: refactor: move manager_name onto RegistrySource
+
+- src/util.rs: remove free manager_name()
+- src\manager\mod.rs: RegistrySource::manager_name()
+- src\dashboard.rs: call site
+- src\grouping.rs: call site
+- src\manager\mod.rs: call site
+
+Fixes #7
+
+Signed-off-by: Vedant Madane <6527493+VedantMadane@users.noreply.github.com>

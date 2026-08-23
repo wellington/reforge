@@ -58,7 +58,7 @@ pub fn build_statuses(
     let mut statuses = Vec::new();
 
     for (dep, _content) in all_deps {
-        let manager = manager_name(&dep.registry);
+        let manager = dep.registry.manager_name();
 
         let branch_name = {
             let sanitized = dep.name.replace('/', "-");
@@ -255,7 +255,7 @@ pub fn write_local_dashboard(body: &str, path: &str) -> Result<()> {
 }
 
 fn manager_name(registry: &RegistrySource) -> &'static str {
-    crate::util::manager_name(registry)
+    registry.manager_name()
 }
 
 #[cfg(test)]

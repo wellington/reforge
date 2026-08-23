@@ -95,7 +95,7 @@ pub fn group_candidates(
     } else {
         let mut per_dep: HashMap<String, usize> = HashMap::new();
         for candidate in unmatched {
-            let manager = manager_name(&candidate.dependency.registry);
+            let manager = candidate.dependency.registry.manager_name();
             let sanitized = candidate.dependency.name.replace('/', "-");
             let name = format!("{manager}-{sanitized}");
             if let Some(&idx) = per_dep.get(&name) {
@@ -144,7 +144,7 @@ fn sub_group_key(rule: &GroupingRule, candidate: &UpdateCandidate) -> String {
             Some(UpdateType::Major) => "major".to_string(),
             None => "unknown".to_string(),
         },
-        GroupBy::Manager => manager_name(&candidate.dependency.registry).to_string(),
+        GroupBy::Manager => candidate.dependency.registry.manager_name().to_string(),
         GroupBy::Path => {
             let path = &candidate.dependency.file_path;
             // Use the parent directory of the file.
@@ -158,7 +158,7 @@ fn sub_group_key(rule: &GroupingRule, candidate: &UpdateCandidate) -> String {
 }
 
 fn manager_name(registry: &RegistrySource) -> &'static str {
-    crate::util::manager_name(registry)
+    registry.manager_name()
 }
 
 fn glob_match(pattern: &str, text: &str) -> bool {

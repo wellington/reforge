@@ -127,3 +127,12 @@ pub trait PackageManager: Send + Sync {
     /// A list of dependencies found in the file, or an error if parsing fails.
     fn extract_dependencies(&self, file_path: &str, contents: &str) -> Result<Vec<Dependency>>;
 }
+
+impl RegistrySource {
+    pub fn self.manager_name() -> &'static str {
+    match self {
+        RegistrySource::DockerRegistry { .. } => "docker",
+        RegistrySource::HelmRepository { .. } | RegistrySource::OciHelmRegistry { .. } => "helm",
+    }
+    }
+}
