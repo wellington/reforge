@@ -1486,6 +1486,13 @@ async fn rebase_single_local_branch(
 
     match strategy {
         StaleMrStrategy::Rebase => {
+            if has_conflicts {
+                error!(
+                    "Local branch '{}' has conflicts - conflict resolution is not implemented; skipping rebase.",
+                    branch
+                );
+                return;
+            }
             if let Err(e) = repo.rebase(branch, default_branch).await {
                 warn!("Failed to rebase local branch '{}': {}", branch, e);
             } else {
