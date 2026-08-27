@@ -1,0 +1,24 @@
+#!/bin/sh
+#
+# Fast quality gate: formatting + clippy. Tests are deliberately NOT run here —
+# use `make ci` or a pre-push hook for those.
+#
+# Caveat: this checks the WORKING TREE, not the staged snapshot. If you stage
+# only some of your changes, the gate still sees all of them. That is the usual
+# tradeoff for keeping the hook simple and non-destructive; the stash-based
+# alternative can lose work when a check fails partway through.
+#
+# Bypass once with:  git commit --no-verify
+
+set -e
+
+echo "pre-commit: cargo fmt + clippy"
+
+if ! make check; then
+	echo
+	echo "pre-commit FAILED."
+	echo "  formatting  -> make fmt-fix"
+	echo "  lints       -> make lint-fix   (or fix by hand)"
+	echo "  bypass once -> git commit --no-verify"
+	exit 1
+fi
