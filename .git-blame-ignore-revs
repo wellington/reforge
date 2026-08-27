@@ -1,0 +1,8 @@
+# Commits that are pure formatting/mechanical churn. `git blame` skips these
+# so line attribution points at the commit that actually changed the logic.
+#
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# cargo fmt across the whole tree (repo had never been formatted)
+5e2017605d92c057d0de0642cf71944b001bbc3b
