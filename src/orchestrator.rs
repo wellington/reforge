@@ -1101,6 +1101,9 @@ impl Orchestrator {
         }
     }
 
+    // TODO: collapse these into a params struct; 9 positional args is past the
+    // point where call sites are readable.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_replacement_replace(
         &self,
         source: &dyn FileSource,

@@ -306,8 +306,8 @@ async fn fetch_oci_digest(
         registry.unwrap_or_else(|| image.split('/').next().unwrap_or("registry-1.docker.io"));
 
     // Strip registry host from image path if present.
-    let repo_path = if image.starts_with(registry_host) {
-        image[registry_host.len()..].trim_start_matches('/')
+    let repo_path = if let Some(rest) = image.strip_prefix(registry_host) {
+        rest.trim_start_matches('/')
     } else {
         image
     };

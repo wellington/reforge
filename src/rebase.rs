@@ -31,7 +31,6 @@ pub enum StaleMrStrategy {
 
 /// An open MR that may be stale.
 #[derive(Debug, Clone)]
-// dont warn on unused fields in api contract
 #[allow(dead_code)]
 pub struct StaleMr {
     pub mr: MergeRequest,
@@ -219,15 +218,4 @@ mod tests {
         let w: Wrapper = toml::from_str("strategy = \"ignore\"").unwrap();
         assert_eq!(w.strategy, StaleMrStrategy::Ignore);
     }
-
-    // fn make_mr() -> MergeRequest {
-    //     MergeRequest {
-    //         iid: 1,
-    //         title: "test".to_string(),
-    //         source_branch: "reforge/test".to_string(),
-    //         target_branch: "main".to_string(),
-    //         state: "opened".to_string(),
-    //         web_url: "https://gitlab.example.com/mr/1".to_string(),
-    //     }
-    // }
 }

@@ -18,6 +18,10 @@ use crate::registry::VersionInfo;
 /// from the current version. Pre-release versions are always excluded.
 #[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
+// The `Semver` prefix is load-bearing: with `rename_all = "kebab-case"` these
+// variant names ARE the user-facing config values (`semver-patch`, etc.).
+// Renaming them to satisfy the lint would break every existing config file.
+#[allow(clippy::enum_variant_names)]
 pub enum PinStrategy {
     /// Only update the patch component (e.g., 1.2.3 → 1.2.4).
     SemverPatch,

@@ -85,7 +85,7 @@ impl PriorityOrder {
 
 /// Sorts `candidates` in-place by priority (highest priority first).
 #[allow(dead_code)]
-pub fn sort_candidates_by_priority(candidates: &mut Vec<UpdateCandidate>) {
+pub fn sort_candidates_by_priority(candidates: &mut [UpdateCandidate]) {
     sort_candidates_by_priority_with_security(candidates, &HashSet::new());
 }
 
@@ -93,7 +93,7 @@ pub fn sort_candidates_by_priority(candidates: &mut Vec<UpdateCandidate>) {
 /// `PriorityOrder::Security` so they are scheduled before all other updates.
 #[allow(dead_code)]
 pub fn sort_candidates_by_priority_with_security(
-    candidates: &mut Vec<UpdateCandidate>,
+    candidates: &mut [UpdateCandidate],
     security_deps: &HashSet<String>,
 ) {
     candidates.sort_by_key(|c| PriorityOrder::from_candidate(c, security_deps));
