@@ -171,8 +171,8 @@ pub async fn handle_stale_mrs(
             for stale in stale_mrs {
                 if stale.has_conflicts {
                     error!(
-                        "MR !{} has merge conflicts - recreating merges on conflicts \
-                        is not supported. Resolve the MR manually or close it and \
+                        "MR !{} has merge conflicts - conflicts are not \
+                        supported. Resolve the MR manually or close it and \
                         reforge will recreate it",
                         stale.mr.iid
                     );
