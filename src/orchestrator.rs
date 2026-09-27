@@ -1457,7 +1457,13 @@ async fn rebase_single_local_branch(
 
     let original = match repo.current_branch().await {
         Ok(b) => b,
-        Err(_) => return,
+        Err(e) => {
+            warn!(
+                "Could not determine current branch before rebasing '{}': {}",
+                branch, e
+            );
+            return;
+        }
     };
     // exit 0: default_branch is an ancestor of branch (up to date); exit 1: branch is behind
     let is_behind = repo
@@ -1486,6 +1492,13 @@ async fn rebase_single_local_branch(
 
     match strategy {
         StaleMrStrategy::Rebase => {
+            if has_conflicts {
+                error!(
+                    "Local branch '{}' has conflicts - conflict resolution is not implemented; skipping rebase.",
+                    branch
+                );
+                return;
+            }
             if let Err(e) = repo.rebase(branch, default_branch).await {
                 warn!("Failed to rebase local branch '{}': {}", branch, e);
             } else {

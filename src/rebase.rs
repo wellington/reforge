@@ -11,7 +11,7 @@
 //! - **Ignore**: Leave stale MRs untouched
 
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::error::Result;
 use crate::platform::gitlab::{GitLabClient, MergeRequest};
@@ -169,6 +169,15 @@ pub async fn handle_stale_mrs(
         }
         StaleMrStrategy::Rebase => {
             for stale in stale_mrs {
+                if stale.has_conflicts {
+                    error!(
+                        "MR !{} has merge conflicts - conflicts are not \
+                        supported. Resolve the MR manually or close it and \
+                        reforge will recreate it",
+                        stale.mr.iid
+                    );
+                    continue;
+                }
                 if let Err(e) = rebase_mr(gitlab, project, stale.mr.iid).await {
                     warn!("Failed to rebase MR !{}: {}", stale.mr.iid, e);
                 }

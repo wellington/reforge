@@ -30,6 +30,7 @@ use crate::orchestrator::Orchestrator;
     name = "reforge",
     about = "Automated dependency updates for Helm charts and Dockerfiles"
 )]
+#[allow(clippy::struct_excessive_bools)]
 struct Cli {
     /// Path to config file
     #[arg(long, default_value = "reforge.toml")]
